@@ -1,0 +1,44 @@
+# Переопределения для продакшна
+# Использование: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+version: "3.9"
+
+services:
+  node-a:
+    environment:
+      LOG_FORMAT: json
+      LOG_LEVEL: warn
+      OUTBOX_INTERVAL_MS: "5000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  node-b:
+    environment:
+      LOG_FORMAT: json
+      LOG_LEVEL: warn
+      OUTBOX_INTERVAL_MS: "5000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  node-c:
+    environment:
+      LOG_FORMAT: json
+      LOG_LEVEL: warn
+      OUTBOX_INTERVAL_MS: "5000"
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  db-a:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+  db-b:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+  db-c:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password

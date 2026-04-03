@@ -10,15 +10,20 @@ import (
 
 	"github.com/dlc-01/replicast/internal/ctxkey"
 	"github.com/dlc-01/replicast/internal/follows"
+	"github.com/dlc-01/replicast/internal/port"
 )
 
-// newHandlerSvc создаёт сервис с alice в userRepo — используется в обоих тестах.
+// newHandlerSvc — сервис с alice и известным node-b для handler тестов.
 func newHandlerSvc() *follows.Service {
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	return newSvc(newMockFollowRepo(), userRepo, &mockFedEnqueuer{})
+	nodeRepo := newMockNodeRegistry()
+	nodeRepo.nodes["node-b"] = &port.Node{Name: "node-b", BaseURL: "http://node-b:8080"}
+	disc := &mockDiscoverer{results: map[string][2]string{
+		"node-b": {"node-b", "http://node-b:8080"},
+	}}
+	return newSvc(newMockFollowRepo(), userRepo, &mockFedEnqueuer{}, nodeRepo, disc)
 }
 
-// withIdentity добавляет global_id в контекст запроса — имитирует JWT middleware.
 func withIdentity(r *http.Request, globalID string) *http.Request {
 	ctx := context.WithValue(r.Context(), ctxkey.UserGlobalID, globalID)
 	return r.WithContext(ctx)
@@ -87,14 +92,9 @@ func TestFollowHandler_Follow(t *testing.T) {
 
 func TestFollowHandler_Follow_Duplicate(t *testing.T) {
 	h := follows.NewHandler(newHandlerSvc())
-
 	body, _ := json.Marshal(map[string]string{"target_global_id": "bob@node-a"})
 
-	// Первый запрос — успех
-	r1 := withIdentity(
-		httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body)),
-		"alice@node-a",
-	)
+	r1 := withIdentity(httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body)), "alice@node-a")
 	r1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	h.Follow(w1, r1)
@@ -102,11 +102,7 @@ func TestFollowHandler_Follow_Duplicate(t *testing.T) {
 		t.Fatalf("first follow: got %d, want %d", w1.Code, http.StatusNoContent)
 	}
 
-	// Второй — конфликт
-	r2 := withIdentity(
-		httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body)),
-		"alice@node-a",
-	)
+	r2 := withIdentity(httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body)), "alice@node-a")
 	r2.Header.Set("Content-Type", "application/json")
 	w2 := httptest.NewRecorder()
 	h.Follow(w2, r2)
@@ -121,7 +117,6 @@ func TestFollowHandler_Unfollow(t *testing.T) {
 	svc := newHandlerSvc()
 	h := follows.NewHandler(svc)
 
-	// Сначала подписываемся через сервис напрямую
 	_ = svc.Follow(context.Background(), "alice@node-a", "bob@node-a")
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/follows/bob@node-a", nil)
@@ -132,8 +127,7 @@ func TestFollowHandler_Unfollow(t *testing.T) {
 	h.Unfollow(w, r)
 
 	if w.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want %d\nbody: %s",
-			w.Code, http.StatusNoContent, w.Body.String())
+		t.Errorf("status = %d, want %d\nbody: %s", w.Code, http.StatusNoContent, w.Body.String())
 	}
 }
 
@@ -148,8 +142,7 @@ func TestFollowHandler_Unfollow_NotFollowing(t *testing.T) {
 	h.Unfollow(w, r)
 
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d\nbody: %s",
-			w.Code, http.StatusNotFound, w.Body.String())
+		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
 	}
 }
 
@@ -159,13 +152,10 @@ func TestFollowHandler_NoIdentity(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{"target_global_id": "bob@node-a"})
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	// identity не добавляем — пустой global_id
 	w := httptest.NewRecorder()
 
 	h.Follow(w, r)
 
-	// Пустой followerGlobalID == пустой targetGlobalID невозможен,
-	// но self-follow "" == "" должен вернуть 400
 	if w.Code == http.StatusNoContent {
 		t.Error("should not succeed with empty identity")
 	}

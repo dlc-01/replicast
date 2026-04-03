@@ -8,45 +8,45 @@ import (
 )
 
 type Config struct {
-	// Node identity
-	NodeName string
-	BaseURL  string
-
-	// Server
-	Port string
-
-	// Database
-	DatabaseURL string
-
-	// Auth
-	JWTSecret string
-
-	// Federation
-	SharedSecret   string
-	OutboxInterval time.Duration
-
-	// Logging
-	LogFormat string
-	LogLevel  string
+	NodeName        string
+	BaseURL         string
+	InternalBaseURL string // для межузлового общения внутри Docker сети
+	Port            string
+	DatabaseURL     string
+	JWTSecret       string
+	SharedSecret    string
+	OutboxInterval  time.Duration
+	LogFormat       string
+	LogLevel        string
 }
 
-// Load читает конфиг из переменных окружения и валидирует.
 func Load() (*Config, error) {
 	cfg := &Config{
-		NodeName:       getEnv("NODE_NAME", "node-a"),
-		BaseURL:        getEnv("BASE_URL", "http://localhost:8080"),
-		Port:           getEnv("PORT", "8080"),
-		DatabaseURL:    getEnv("DATABASE_URL", ""),
-		JWTSecret:      getEnv("JWT_SECRET", ""),
-		SharedSecret:   getEnv("SHARED_SECRET", ""),
-		LogFormat:      getEnv("LOG_FORMAT", "json"),
-		LogLevel:       getEnv("LOG_LEVEL", "info"),
-		OutboxInterval: parseMillis(getEnv("OUTBOX_INTERVAL_MS", "5000")),
+		NodeName:        getEnv("NODE_NAME", "node-a"),
+		BaseURL:         getEnv("BASE_URL", "http://localhost:8080"),
+		InternalBaseURL: getEnv("INTERNAL_BASE_URL", ""),
+		Port:            getEnv("PORT", "8080"),
+		DatabaseURL:     getEnv("DATABASE_URL", ""),
+		JWTSecret:       getEnv("JWT_SECRET", ""),
+		SharedSecret:    getEnv("SHARED_SECRET", ""),
+		LogFormat:       getEnv("LOG_FORMAT", "json"),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		OutboxInterval:  parseMillis(getEnv("OUTBOX_INTERVAL_MS", "5000")),
+	}
+	// Если INTERNAL_BASE_URL не задан — используем BASE_URL
+	if cfg.InternalBaseURL == "" {
+		cfg.InternalBaseURL = cfg.BaseURL
 	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+// WellKnownBaseURL возвращает URL для discovery через /.well-known.
+// Внутри Docker используем InternalBaseURL, снаружи — BASE_URL.
+func (c *Config) WellKnownBaseURL() string {
+	return c.InternalBaseURL
 }
 
 func (c *Config) validate() error {

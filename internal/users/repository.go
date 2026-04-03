@@ -106,8 +106,9 @@ func (r *Repository) GetPasswordHash(ctx context.Context, globalID string) (stri
 // При ErrNoRows возвращает ErrUserNotFound — никогда nil, nil.
 func (r *Repository) scanOne(ctx context.Context, query string, args ...any) (*port.User, error) {
 	u := &port.User{}
+	var localUsername *string // NULL для remote users
 	err := r.db.QueryRow(ctx, query, args...).Scan(
-		&u.ID, &u.GlobalID, &u.LocalUsername, &u.HomeNode,
+		&u.ID, &u.GlobalID, &localUsername, &u.HomeNode,
 		&u.DisplayName, &u.Bio, &u.IsLocal, &u.CreatedAt,
 	)
 	if err != nil {
@@ -115,6 +116,9 @@ func (r *Repository) scanOne(ctx context.Context, query string, args ...any) (*p
 			return nil, apperr.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("users.scanOne: %w", err)
+	}
+	if localUsername != nil {
+		u.LocalUsername = *localUsername
 	}
 	return u, nil
 }

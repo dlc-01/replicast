@@ -37,6 +37,14 @@ func (m *mockOutboxRepo) MarkDelivered(_ context.Context, id string) error {
 
 func (m *mockOutboxRepo) MarkFailed(_ context.Context, id string, _ int) error {
 	m.failed = append(m.failed, id)
+	// Убираем из очереди чтобы не переотправлялось
+	var remaining []port.OutboxRow
+	for _, e := range m.events {
+		if e.ID != id {
+			remaining = append(remaining, e)
+		}
+	}
+	m.events = remaining
 	return nil
 }
 
@@ -223,11 +231,15 @@ func TestOutboxWorker_SourceNodeInEvent(t *testing.T) {
 	repo.nodes["node-b"] = &port.Node{Name: "node-b", BaseURL: "http://node-b:8080"}
 	sender := &mockSender{}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	w := newWorker(repo, sender)
+	cfg := &config.Config{
+		NodeName:       "node-a",
+		OutboxInterval: 200 * time.Millisecond, // интервал больше таймаута — ровно один тик
+	}
+	w := worker.NewOutboxWorker(repo, sender, cfg)
 
+	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(150 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 		cancel()
 	}()
 	w.Run(ctx)
@@ -235,7 +247,6 @@ func TestOutboxWorker_SourceNodeInEvent(t *testing.T) {
 	if len(sender.sent) != 1 {
 		t.Fatalf("sent = %d, want 1", len(sender.sent))
 	}
-	// Worker должен проставить source_node из своего конфига
 	if sender.sent[0].SourceNode != "node-a" {
 		t.Errorf("source_node = %q, want node-a", sender.sent[0].SourceNode)
 	}

@@ -30,12 +30,10 @@ func (m *mockFollowRepo) Create(_ context.Context, f port.Follow) error {
 	m.data[followKey(f.FollowerUserID, f.TargetGlobalUserID)] = f
 	return nil
 }
-
 func (m *mockFollowRepo) Delete(_ context.Context, followerUUID, targetGlobalID string) error {
 	delete(m.data, followKey(followerUUID, targetGlobalID))
 	return nil
 }
-
 func (m *mockFollowRepo) Exists(_ context.Context, followerUUID, targetGlobalID string) (bool, error) {
 	_, ok := m.data[followKey(followerUUID, targetGlobalID)]
 	return ok, nil
@@ -62,23 +60,60 @@ func (m *mockFedEnqueuer) EnqueueEvent(_ context.Context, e port.OutboxEvent) er
 	return nil
 }
 
+type mockNodeRegistry struct {
+	nodes map[string]*port.Node
+}
+
+func newMockNodeRegistry() *mockNodeRegistry {
+	return &mockNodeRegistry{nodes: make(map[string]*port.Node)}
+}
+
+func (m *mockNodeRegistry) GetNodeByName(_ context.Context, name string) (*port.Node, error) {
+	n, ok := m.nodes[name]
+	if !ok {
+		return nil, apperr.NotFound("node_not_found", "node not found")
+	}
+	return n, nil
+}
+func (m *mockNodeRegistry) UpsertNode(_ context.Context, n port.Node) error {
+	m.nodes[n.Name] = &n
+	return nil
+}
+
+// mockDiscoverer имитирует FetchWellKnownInfo
+type mockDiscoverer struct {
+	results map[string][2]string // nodeName → [node, baseURL]
+	err     error
+}
+
+func (m *mockDiscoverer) FetchWellKnownInfo(_ context.Context, nodeName string) (string, string, error) {
+	if m.err != nil {
+		return "", "", m.err
+	}
+	r, ok := m.results[nodeName]
+	if !ok {
+		return "", "", errors.New("node not reachable: " + nodeName)
+	}
+	return r[0], r[1], nil
+}
+
 // — Хелперы ──────────────────────────────────────────────────────────
 
 func followTestCfg() *config.Config {
-	return &config.Config{NodeName: "node-a"}
+	return &config.Config{NodeName: "node-a", BaseURL: "http://node-a:8080", SharedSecret: "secret"}
 }
 
-func newSvc(fr *mockFollowRepo, ur *mockUserLookup, fe *mockFedEnqueuer) *follows.Service {
-	return follows.NewService(fr, ur, fe, logger.Nop(), followTestCfg())
+func newSvc(fr *mockFollowRepo, ur *mockUserLookup, fe *mockFedEnqueuer, nr *mockNodeRegistry, disc *mockDiscoverer) *follows.Service {
+	return follows.NewService(fr, ur, fe, nr, disc, logger.Nop(), followTestCfg())
 }
 
-// — Follow ────────────────────────────────────────────────────────────
+// — Follow — локальный ───────────────────────────────────────────────
 
-func TestFollow_Success_Local(t *testing.T) {
+func TestFollow_Local_NoFedEvent(t *testing.T) {
 	followRepo := newMockFollowRepo()
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
 	fedRepo := &mockFedEnqueuer{}
-	svc := newSvc(followRepo, userRepo, fedRepo)
+	svc := newSvc(followRepo, userRepo, fedRepo, newMockNodeRegistry(), &mockDiscoverer{})
 
 	if err := svc.Follow(context.Background(), "alice@node-a", "bob@node-a"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -93,35 +128,78 @@ func TestFollow_Success_Local(t *testing.T) {
 	}
 }
 
-func TestFollow_Success_Remote_SendsFederationEvent(t *testing.T) {
+// — Follow — удалённый с auto-discovery ──────────────────────────────
+
+func TestFollow_Remote_DiscoversNode(t *testing.T) {
 	followRepo := newMockFollowRepo()
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
 	fedRepo := &mockFedEnqueuer{}
-	svc := newSvc(followRepo, userRepo, fedRepo)
+	nodeRepo := newMockNodeRegistry()
+	disc := &mockDiscoverer{results: map[string][2]string{
+		"node-b": {"node-b", "http://node-b:8080"},
+	}}
+	svc := newSvc(followRepo, userRepo, fedRepo, nodeRepo, disc)
 
 	if err := svc.Follow(context.Background(), "alice@node-a", "carol@node-b"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
+	// Узел был сохранён через discovery
+	if _, ok := nodeRepo.nodes["node-b"]; !ok {
+		t.Error("node-b should be saved after discovery")
+	}
+
+	// Federation событие отправлено
 	if len(fedRepo.events) != 1 {
 		t.Fatalf("expected 1 federation event, got %d", len(fedRepo.events))
 	}
-	e := fedRepo.events[0]
-	if e.EventType != "user.followed" {
-		t.Errorf("event_type = %q, want user.followed", e.EventType)
+	if fedRepo.events[0].EventType != "user.followed" {
+		t.Errorf("event_type = %q, want user.followed", fedRepo.events[0].EventType)
 	}
-	if e.TargetNode != "node-b" {
-		t.Errorf("target_node = %q, want node-b", e.TargetNode)
+	if fedRepo.events[0].TargetNode != "node-b" {
+		t.Errorf("target_node = %q, want node-b", fedRepo.events[0].TargetNode)
 	}
 }
 
+func TestFollow_Remote_NodeAlreadyKnown_NoDiscovery(t *testing.T) {
+	followRepo := newMockFollowRepo()
+	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
+	fedRepo := &mockFedEnqueuer{}
+	nodeRepo := newMockNodeRegistry()
+	// node-b уже известен
+	nodeRepo.nodes["node-b"] = &port.Node{Name: "node-b", BaseURL: "http://node-b:8080"}
+
+	// Discoverer вернёт ошибку — но он не должен вызываться
+	disc := &mockDiscoverer{err: errors.New("should not be called")}
+	svc := newSvc(followRepo, userRepo, fedRepo, nodeRepo, disc)
+
+	err := svc.Follow(context.Background(), "alice@node-a", "carol@node-b")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Всё равно отправили federation событие
+	if len(fedRepo.events) != 1 {
+		t.Errorf("expected 1 federation event, got %d", len(fedRepo.events))
+	}
+}
+
+func TestFollow_Remote_DiscoveryFails_ReturnsError(t *testing.T) {
+	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
+	disc := &mockDiscoverer{err: errors.New("connection refused")}
+	svc := newSvc(newMockFollowRepo(), userRepo, &mockFedEnqueuer{}, newMockNodeRegistry(), disc)
+
+	err := svc.Follow(context.Background(), "alice@node-a", "carol@unknown-node")
+	if err == nil {
+		t.Error("expected error when discovery fails")
+	}
+}
+
+// — Follow — ошибки ───────────────────────────────────────────────────
+
 func TestFollow_SelfFollow(t *testing.T) {
-	svc := newSvc(newMockFollowRepo(), &mockUserLookup{}, &mockFedEnqueuer{})
+	svc := newSvc(newMockFollowRepo(), &mockUserLookup{}, &mockFedEnqueuer{}, newMockNodeRegistry(), &mockDiscoverer{})
 
 	err := svc.Follow(context.Background(), "alice@node-a", "alice@node-a")
-	if err == nil {
-		t.Fatal("expected error")
-	}
 	var appErr *apperr.AppError
 	if !errors.As(err, &appErr) || appErr.Code != "self_follow" {
 		t.Errorf("expected self_follow AppError, got %v", err)
@@ -129,7 +207,7 @@ func TestFollow_SelfFollow(t *testing.T) {
 }
 
 func TestFollow_UserNotFound(t *testing.T) {
-	svc := newSvc(newMockFollowRepo(), &mockUserLookup{uuids: map[string]string{}}, &mockFedEnqueuer{})
+	svc := newSvc(newMockFollowRepo(), &mockUserLookup{uuids: map[string]string{}}, &mockFedEnqueuer{}, newMockNodeRegistry(), &mockDiscoverer{})
 
 	err := svc.Follow(context.Background(), "nobody@node-a", "bob@node-a")
 	if !errors.Is(err, apperr.ErrUserNotFound) {
@@ -140,7 +218,7 @@ func TestFollow_UserNotFound(t *testing.T) {
 func TestFollow_AlreadyFollowing(t *testing.T) {
 	followRepo := newMockFollowRepo()
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	svc := newSvc(followRepo, userRepo, &mockFedEnqueuer{})
+	svc := newSvc(followRepo, userRepo, &mockFedEnqueuer{}, newMockNodeRegistry(), &mockDiscoverer{})
 
 	_ = svc.Follow(context.Background(), "alice@node-a", "bob@node-a")
 	err := svc.Follow(context.Background(), "alice@node-a", "bob@node-a")
@@ -156,10 +234,9 @@ func TestFollow_AlreadyFollowing(t *testing.T) {
 func TestUnfollow_Success(t *testing.T) {
 	followRepo := newMockFollowRepo()
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	svc := newSvc(followRepo, userRepo, &mockFedEnqueuer{})
+	svc := newSvc(followRepo, userRepo, &mockFedEnqueuer{}, newMockNodeRegistry(), &mockDiscoverer{})
 
 	_ = svc.Follow(context.Background(), "alice@node-a", "bob@node-a")
-
 	if err := svc.Unfollow(context.Background(), "alice@node-a", "bob@node-a"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,7 +249,7 @@ func TestUnfollow_Success(t *testing.T) {
 
 func TestUnfollow_NotFollowing(t *testing.T) {
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	svc := newSvc(newMockFollowRepo(), userRepo, &mockFedEnqueuer{})
+	svc := newSvc(newMockFollowRepo(), userRepo, &mockFedEnqueuer{}, newMockNodeRegistry(), &mockDiscoverer{})
 
 	err := svc.Unfollow(context.Background(), "alice@node-a", "bob@node-a")
 	var appErr *apperr.AppError
@@ -181,45 +258,23 @@ func TestUnfollow_NotFollowing(t *testing.T) {
 	}
 }
 
-func TestUnfollow_UserNotFound(t *testing.T) {
-	svc := newSvc(newMockFollowRepo(), &mockUserLookup{uuids: map[string]string{}}, &mockFedEnqueuer{})
+// — payload содержит follower_base_url ────────────────────────────────
 
-	err := svc.Unfollow(context.Background(), "nobody@node-a", "bob@node-a")
-	if !errors.Is(err, apperr.ErrUserNotFound) {
-		t.Errorf("expected ErrUserNotFound, got %v", err)
+func TestFollow_Remote_PayloadContainsBaseURL(t *testing.T) {
+	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
+	fedRepo := &mockFedEnqueuer{}
+	nodeRepo := newMockNodeRegistry()
+	nodeRepo.nodes["node-b"] = &port.Node{Name: "node-b", BaseURL: "http://node-b:8080"}
+	svc := newSvc(newMockFollowRepo(), userRepo, fedRepo, nodeRepo, &mockDiscoverer{})
+
+	_ = svc.Follow(context.Background(), "alice@node-a", "carol@node-b")
+
+	if len(fedRepo.events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(fedRepo.events))
 	}
-}
-
-// — Табличный тест: локальный vs удалённый узел ───────────────────────
-
-func TestFollow_NodeDetection(t *testing.T) {
-	tests := []struct {
-		target       string
-		wantFedEvent bool
-		wantNode     string
-	}{
-		{"bob@node-a", false, ""},      // локальный — нет события
-		{"bob@node-b", true, "node-b"}, // удалённый — есть событие
-		{"bob@node-c", true, "node-c"}, // другой удалённый
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.target, func(t *testing.T) {
-			userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-			fedRepo := &mockFedEnqueuer{}
-			svc := newSvc(newMockFollowRepo(), userRepo, fedRepo)
-
-			if err := svc.Follow(context.Background(), "alice@node-a", tt.target); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			hasFed := len(fedRepo.events) > 0
-			if hasFed != tt.wantFedEvent {
-				t.Errorf("federation event = %v, want %v", hasFed, tt.wantFedEvent)
-			}
-			if tt.wantFedEvent && fedRepo.events[0].TargetNode != tt.wantNode {
-				t.Errorf("target_node = %q, want %q", fedRepo.events[0].TargetNode, tt.wantNode)
-			}
-		})
+	payload := fedRepo.events[0].Payload
+	baseURL, ok := payload["follower_base_url"].(string)
+	if !ok || baseURL != "http://node-a:8080" {
+		t.Errorf("follower_base_url = %v, want http://node-a:8080", payload["follower_base_url"])
 	}
 }

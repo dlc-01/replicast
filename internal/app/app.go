@@ -25,8 +25,6 @@ import (
 	"github.com/dlc-01/replicast/internal/worker"
 )
 
-// App — корневой объект приложения.
-// Владеет всеми зависимостями и управляет их жизненным циклом.
 type App struct {
 	cfg    *config.Config
 	log    logger.Logger
@@ -35,13 +33,8 @@ type App struct {
 	worker *worker.OutboxWorker
 }
 
-// New собирает граф зависимостей.
-// Все ошибки инициализации возвращаются — никакой паники.
 func New(cfg *config.Config, log logger.Logger) (*App, error) {
-	log.Info("initializing application",
-		"node", cfg.NodeName,
-		"base_url", cfg.BaseURL,
-	)
+	log.Info("initializing application", "node", cfg.NodeName, "base_url", cfg.BaseURL)
 
 	db, err := storage.NewPool(cfg.DatabaseURL)
 	if err != nil {
@@ -63,15 +56,17 @@ func New(cfg *config.Config, log logger.Logger) (*App, error) {
 	feedRepo := feed.NewRepository(db)
 	fedRepo := federation.NewRepository(db)
 
-	// — Сервисы (logger пробрасывается во все)
+	// — Federation client (EventSender + NodeDiscoverer)
+	fedClient := federation.NewClient(cfg)
+
+	// — Сервисы
 	authSvc := auth.NewService(authRepo, log, cfg)
 	userSvc := users.NewServiceWithLogger(userRepo, log, cfg)
 	postSvc := posts.NewService(postRepo, feedRepo, fedRepo, userRepo, log, cfg)
-	followSvc := follows.NewService(followRepo, userRepo, fedRepo, log, cfg)
+	followSvc := follows.NewService(followRepo, userRepo, fedRepo, fedRepo, fedClient, log, cfg)
 	feedSvc := feed.NewService(feedRepo)
-	fedSvc := federation.NewService(fedRepo, postRepo, userRepo, feedRepo, cfg)
+	fedSvc := federation.NewService(fedRepo, postRepo, userRepo, feedRepo, followRepo, log, cfg)
 
-	fedClient := federation.NewClient(cfg)
 	outboxWorker := worker.NewOutboxWorker(fedRepo, fedClient, cfg)
 
 	router := httpapi.NewRouter(httpapi.Deps{
@@ -88,31 +83,17 @@ func New(cfg *config.Config, log logger.Logger) (*App, error) {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	return &App{
-		cfg:    cfg,
-		log:    log,
-		db:     db,
-		server: srv,
-		worker: outboxWorker,
-	}, nil
+	return &App{cfg: cfg, log: log, db: db, server: srv, worker: outboxWorker}, nil
 }
 
-// Run запускает все компоненты и блокируется до сигнала завершения.
 func (a *App) Run() error {
-	ctx, stop := signal.NotifyContext(context.Background(),
-		os.Interrupt,
-		syscall.SIGTERM,
-	)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Только для критических ошибок HTTP сервера
 	serverErr := make(chan error, 1)
 
-	// Worker останавливается по ctx — не пишет в канал при нормальном завершении
 	go func() {
-		a.log.Info("outbox worker started",
-			"interval_ms", a.cfg.OutboxInterval.Milliseconds(),
-		)
+		a.log.Info("outbox worker started", "interval_ms", a.cfg.OutboxInterval.Milliseconds())
 		a.worker.Run(ctx)
 		a.log.Info("outbox worker stopped")
 	}()
@@ -134,10 +115,8 @@ func (a *App) Run() error {
 	return a.shutdown()
 }
 
-// shutdown корректно останавливает компоненты в обратном порядке инициализации.
 func (a *App) shutdown() error {
 	a.log.Info("shutting down gracefully...")
-
 	shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -145,10 +124,7 @@ func (a *App) shutdown() error {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 	a.log.Info("http server stopped")
-
 	a.db.Close()
-	a.log.Info("database pool closed")
-
 	a.log.Info("node stopped gracefully", "node", a.cfg.NodeName)
 	return nil
 }

@@ -1,6 +1,7 @@
 package federation_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/dlc-01/replicast/internal/config"
 	"github.com/dlc-01/replicast/internal/federation"
+	"github.com/dlc-01/replicast/internal/logger"
 	"github.com/dlc-01/replicast/internal/port"
 )
 
@@ -69,13 +71,18 @@ func (m *mockFeedRepo) GetFollowerUserIDs(_ context.Context, _ string) ([]string
 
 // — Хелпер ───────────────────────────────────────────────────────────
 
+type mockFollowWriterH struct{}
+
+func (m *mockFollowWriterH) Create(_ context.Context, _ port.Follow) error { return nil }
+
 func newTestHandler(nodeName, baseURL string) *federation.Handler {
 	cfg := &config.Config{
-		NodeName: nodeName,
-		BaseURL:  baseURL,
+		NodeName:        nodeName,
+		BaseURL:         baseURL,
+		InternalBaseURL: baseURL,
 	}
 	svc := federation.NewService(
-		&mockFedRepo{}, &mockPostRepo{}, &mockUserRepo{}, &mockFeedRepo{}, cfg,
+		&mockFedRepo{}, &mockPostRepo{}, &mockUserRepo{}, &mockFeedRepo{}, &mockFollowWriterH{}, logger.Nop(), cfg,
 	)
 	return federation.NewHandler(svc, cfg)
 }
@@ -111,18 +118,36 @@ func TestFederationHandler_WellKnown(t *testing.T) {
 func TestFederationHandler_Handshake(t *testing.T) {
 	h := newTestHandler("node-b", "http://node-b:8080")
 
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/federation/handshake", nil)
+	body, _ := json.Marshal(map[string]string{
+		"node_name": "node-a",
+		"base_url":  "http://node-a:8080",
+		"secret":    "shared-secret",
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/federation/handshake", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	h.Handshake(w, r)
 
 	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		t.Fatalf("status = %d, want %d\nbody: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 
 	var resp map[string]string
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp["node"] != "node-b" {
 		t.Errorf("node = %q, want node-b", resp["node"])
+	}
+}
+
+func TestFederationHandler_Handshake_MissingBody(t *testing.T) {
+	h := newTestHandler("node-a", "http://node-a:8080")
+
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/federation/handshake", nil)
+	w := httptest.NewRecorder()
+	h.Handshake(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
@@ -157,38 +182,64 @@ func TestFederationHandler_WellKnown_DifferentNodes(t *testing.T) {
 	}
 }
 
-func TestFederationHandler_ReceiveEvent_NotImplemented(t *testing.T) {
+func TestFederationHandler_ReceiveEvent_ValidBody(t *testing.T) {
+	h := newTestHandler("node-a", "http://node-a:8080")
+
+	// user.followed не требует резолва авторов — используем его для handler теста
+	payload, _ := json.Marshal(map[string]string{
+		"follower_global_id": "bob@node-b",
+		"target_global_id":   "alice@node-a",
+		"follower_node":      "node-b",
+		"follower_base_url":  "http://node-b:8080",
+	})
+	body, _ := json.Marshal(map[string]any{
+		"event_id":    "evt-001",
+		"event_type":  "user.followed",
+		"source_node": "node-b",
+		"payload":     json.RawMessage(payload),
+	})
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/federation/events", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ReceiveEvent(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d\nbody: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+func TestFederationHandler_ReceiveEvent_EmptyBody(t *testing.T) {
 	h := newTestHandler("node-a", "http://node-a:8080")
 
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/federation/events", nil)
 	w := httptest.NewRecorder()
 	h.ReceiveEvent(w, r)
 
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
-func TestFederationHandler_ReceiveFollow_NotImplemented(t *testing.T) {
+func TestFederationHandler_ReceiveFollow_Returns200(t *testing.T) {
 	h := newTestHandler("node-a", "http://node-a:8080")
 
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/federation/follows", nil)
 	w := httptest.NewRecorder()
 	h.ReceiveFollow(w, r)
 
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 
-func TestFederationHandler_GetRemoteUser_NotImplemented(t *testing.T) {
+func TestFederationHandler_GetRemoteUser_MissingPathValue(t *testing.T) {
 	h := newTestHandler("node-a", "http://node-a:8080")
 
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/federation/users/alice@node-b", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/federation/users/", nil)
 	w := httptest.NewRecorder()
 	h.GetRemoteUser(w, r)
 
-	if w.Code != http.StatusNotImplemented {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotImplemented)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }

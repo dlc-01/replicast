@@ -13,7 +13,6 @@ import (
 	"github.com/dlc-01/replicast/internal/port"
 )
 
-// userResolver — минимальный интерфейс для резолва UUID по globalID.
 type userResolver interface {
 	GetUUIDByGlobalID(ctx context.Context, globalID string) (string, error)
 }
@@ -64,7 +63,6 @@ func (s *Service) Create(ctx context.Context, authorGlobalID, content string) (*
 		return nil, fmt.Errorf("posts.Create: %w", err)
 	}
 
-	// Лента автора
 	if err := s.feedRepo.AddItem(ctx, port.FeedItem{
 		OwnerUserID:  authorUUID,
 		PostGlobalID: globalID,
@@ -73,7 +71,6 @@ func (s *Service) Create(ctx context.Context, authorGlobalID, content string) (*
 		s.log.Warn("posts.Create: add to author feed", "err", err)
 	}
 
-	// Ленты локальных подписчиков
 	followerIDs, err := s.feedRepo.GetFollowerUserIDs(ctx, authorGlobalID)
 	if err != nil {
 		s.log.Warn("posts.Create: get follower ids", "err", err)
@@ -88,14 +85,12 @@ func (s *Service) Create(ctx context.Context, authorGlobalID, content string) (*
 		}
 	}
 
-	// Outbox для удалённых узлов
 	remoteNodes, err := s.postRepo.GetFollowerNodes(ctx, authorUUID)
 	if err != nil {
 		s.log.Warn("posts.Create: get follower nodes", "err", err)
 	}
 	for _, node := range remoteNodes {
 		if err := s.fedRepo.EnqueueEvent(ctx, port.OutboxEvent{
-			EventID:    ulid.Make().String(),
 			TargetNode: node,
 			EventType:  "post.created",
 			Payload: map[string]any{
@@ -125,8 +120,6 @@ func (s *Service) Get(ctx context.Context, globalID string) (*port.Post, error) 
 	return p, nil
 }
 
-// Update обновляет пост.
-// authorGlobalID резолвится в UUID и сравнивается с p.AuthorID — исправлено.
 func (s *Service) Update(ctx context.Context, globalID, authorGlobalID, content string) (*port.Post, error) {
 	p, err := s.postRepo.GetByGlobalID(ctx, globalID)
 	if err != nil {
@@ -136,7 +129,6 @@ func (s *Service) Update(ctx context.Context, globalID, authorGlobalID, content 
 		return nil, apperr.ErrPostNotFound
 	}
 
-	// Резолвим UUID автора запроса и сравниваем с UUID автора поста
 	authorUUID, err := s.userRepo.GetUUIDByGlobalID(ctx, authorGlobalID)
 	if err != nil {
 		return nil, fmt.Errorf("posts.Update resolve author: %w", err)
@@ -150,12 +142,29 @@ func (s *Service) Update(ctx context.Context, globalID, authorGlobalID, content 
 		return nil, fmt.Errorf("posts.Update: %w", err)
 	}
 
+	// Рассылаем post.updated на все узлы где есть подписчики
+	remoteNodes, err := s.postRepo.GetFollowerNodes(ctx, authorUUID)
+	if err != nil {
+		s.log.Warn("posts.Update: get follower nodes", "err", err)
+	}
+	for _, node := range remoteNodes {
+		if err := s.fedRepo.EnqueueEvent(ctx, port.OutboxEvent{
+			TargetNode: node,
+			EventType:  "post.updated",
+			Payload: map[string]any{
+				"global_id": globalID,
+				"content":   content,
+				"version":   updated.Version,
+			},
+		}); err != nil {
+			s.log.Warn("posts.Update: enqueue event", "node", node, "err", err)
+		}
+	}
+
 	s.log.Info("post updated", "global_id", globalID)
 	return updated, nil
 }
 
-// Delete мягко удаляет пост.
-// authorGlobalID резолвится в UUID перед сравнением — исправлено.
 func (s *Service) Delete(ctx context.Context, globalID, authorGlobalID string) error {
 	p, err := s.postRepo.GetByGlobalID(ctx, globalID)
 	if err != nil {
@@ -175,6 +184,23 @@ func (s *Service) Delete(ctx context.Context, globalID, authorGlobalID string) e
 
 	if _, err := s.postRepo.Delete(ctx, globalID); err != nil {
 		return fmt.Errorf("posts.Delete: %w", err)
+	}
+
+	// Рассылаем post.deleted на все узлы где есть подписчики
+	remoteNodes, err := s.postRepo.GetFollowerNodes(ctx, authorUUID)
+	if err != nil {
+		s.log.Warn("posts.Delete: get follower nodes", "err", err)
+	}
+	for _, node := range remoteNodes {
+		if err := s.fedRepo.EnqueueEvent(ctx, port.OutboxEvent{
+			TargetNode: node,
+			EventType:  "post.deleted",
+			Payload: map[string]any{
+				"global_id": globalID,
+			},
+		}); err != nil {
+			s.log.Warn("posts.Delete: enqueue event", "node", node, "err", err)
+		}
 	}
 
 	s.log.Info("post deleted", "global_id", globalID)

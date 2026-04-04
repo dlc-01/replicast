@@ -31,6 +31,10 @@ func (m *mockPostRepo) Create(_ context.Context, p port.Post) error {
 	return nil
 }
 
+func (m *mockPostRepo) GetByID(_ context.Context, _ string) (*port.Post, error) {
+	return nil, nil
+}
+
 func (m *mockPostRepo) GetByGlobalID(_ context.Context, globalID string) (*port.Post, error) {
 	p, ok := m.data[globalID]
 	if !ok {

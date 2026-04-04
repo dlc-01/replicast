@@ -92,6 +92,55 @@ CREATE TABLE processed_events (
                                   processed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+
+-- Лайки постов
+CREATE TABLE likes (
+                       id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                       user_id        UUID NOT NULL REFERENCES users(id),
+                       post_global_id TEXT NOT NULL,
+                       created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+                       UNIQUE (user_id, post_global_id)
+);
+CREATE INDEX likes_post_idx ON likes (post_global_id);
+
+-- Комментарии к постам
+CREATE TABLE comments (
+                          id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                          global_id      TEXT NOT NULL UNIQUE,  -- comment:author@node:ULID
+                          post_global_id TEXT NOT NULL,
+                          author_id      UUID NOT NULL REFERENCES users(id),
+                          origin_node    TEXT NOT NULL,
+                          content        TEXT NOT NULL,
+                          status         TEXT NOT NULL DEFAULT 'active',
+                          created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX comments_post_idx ON comments (post_global_id, created_at DESC);
+
+-- Диалоги (личные переписки между двумя пользователями)
+CREATE TABLE conversations (
+                               id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                               participant_a   TEXT NOT NULL,  -- global_id
+                               participant_b   TEXT NOT NULL,  -- global_id
+                               last_message_at TIMESTAMPTZ,
+                               created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+                               UNIQUE (participant_a, participant_b)
+);
+CREATE INDEX conversations_a_idx ON conversations (participant_a);
+CREATE INDEX conversations_b_idx ON conversations (participant_b);
+
+-- Сообщения в диалогах
+CREATE TABLE messages (
+                          id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                          global_id       TEXT NOT NULL UNIQUE,  -- msg:sender@node:ULID
+                          conversation_id UUID NOT NULL REFERENCES conversations(id),
+                          sender_id       UUID NOT NULL REFERENCES users(id),
+                          content         TEXT NOT NULL,
+                          status          TEXT NOT NULL DEFAULT 'sent',  -- sent | delivered | read
+                          created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX messages_conv_idx ON messages (conversation_id, created_at DESC);
+
 -- +goose Down
 DROP TABLE IF EXISTS processed_events;
 DROP TABLE IF EXISTS federation_outbox;
@@ -100,3 +149,7 @@ DROP TABLE IF EXISTS follows;
 DROP TABLE IF EXISTS posts;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS nodes;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS conversations;
+DROP TABLE IF EXISTS comments;
+DROP TABLE IF EXISTS likes;

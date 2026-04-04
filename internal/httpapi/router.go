@@ -4,28 +4,31 @@ import (
 	"net/http"
 
 	"github.com/dlc-01/replicast/internal/auth"
+	"github.com/dlc-01/replicast/internal/comments"
 	"github.com/dlc-01/replicast/internal/config"
+	"github.com/dlc-01/replicast/internal/dms"
 	"github.com/dlc-01/replicast/internal/federation"
 	"github.com/dlc-01/replicast/internal/feed"
 	"github.com/dlc-01/replicast/internal/follows"
+	"github.com/dlc-01/replicast/internal/likes"
 	"github.com/dlc-01/replicast/internal/posts"
 	"github.com/dlc-01/replicast/internal/respond"
 	"github.com/dlc-01/replicast/internal/users"
 )
 
 type Deps struct {
-	AuthSvc   *auth.Service
-	UserSvc   *users.Service
-	PostSvc   *posts.Service
-	FollowSvc *follows.Service
-	FeedSvc   *feed.Service
-	FedSvc    *federation.Service
-	Cfg       *config.Config
+	AuthSvc    *auth.Service
+	UserSvc    *users.Service
+	PostSvc    *posts.Service
+	FollowSvc  *follows.Service
+	FeedSvc    *feed.Service
+	FedSvc     *federation.Service
+	LikeSvc    *likes.Service
+	CommentSvc *comments.Service
+	DMSvc      *dms.Service
+	Cfg        *config.Config
 }
 
-// NewRouter собирает все маршруты.
-// Глобальные middleware: Recovery → RequestID → Logging.
-// Go 1.25 ServeMux: "METHOD /path/{param}" без сторонних библиотек.
 func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
 
@@ -35,6 +38,9 @@ func NewRouter(d Deps) http.Handler {
 	followH := follows.NewHandler(d.FollowSvc)
 	feedH := feed.NewHandler(d.FeedSvc)
 	fedH := federation.NewHandler(d.FedSvc, d.Cfg)
+	likeH := likes.NewHandler(d.LikeSvc)
+	commentH := comments.NewHandler(d.CommentSvc)
+	dmH := dms.NewHandler(d.DMSvc)
 
 	jwtAuth := RequireAuth(d.Cfg)
 	fedAuth := RequireFedAuth(d.Cfg)
@@ -49,9 +55,25 @@ func NewRouter(d Deps) http.Handler {
 
 	// — Posts
 	mux.HandleFunc("POST /api/v1/posts", jwtAuth(postH.Create))
-	mux.HandleFunc("GET /api/v1/posts/{id}", postH.Get)
-	mux.HandleFunc("PUT /api/v1/posts/{id}", jwtAuth(postH.Update))
-	mux.HandleFunc("DELETE /api/v1/posts/{id}", jwtAuth(postH.Delete))
+	mux.HandleFunc("GET /api/v1/posts/{global_id}", postH.Get)
+	mux.HandleFunc("PUT /api/v1/posts/{global_id}", jwtAuth(postH.Update))
+	mux.HandleFunc("DELETE /api/v1/posts/{global_id}", jwtAuth(postH.Delete))
+
+	// — Likes
+	mux.HandleFunc("POST /api/v1/posts/{global_id}/like", jwtAuth(likeH.Like))
+	mux.HandleFunc("DELETE /api/v1/posts/{global_id}/like", jwtAuth(likeH.Unlike))
+	mux.HandleFunc("GET /api/v1/posts/{global_id}/likes", likeH.GetLikes)
+
+	// — Comments
+	mux.HandleFunc("POST /api/v1/posts/{global_id}/comments", jwtAuth(commentH.Create))
+	mux.HandleFunc("GET /api/v1/posts/{global_id}/comments", commentH.List)
+	mux.HandleFunc("DELETE /api/v1/comments/{global_id}", jwtAuth(commentH.Delete))
+
+	// — DMs
+	mux.HandleFunc("POST /api/v1/conversations", jwtAuth(dmH.StartConversation))
+	mux.HandleFunc("GET /api/v1/conversations", jwtAuth(dmH.ListConversations))
+	mux.HandleFunc("POST /api/v1/conversations/{id}/messages", jwtAuth(dmH.SendMessage))
+	mux.HandleFunc("GET /api/v1/conversations/{id}/messages", jwtAuth(dmH.GetMessages))
 
 	// — Follows
 	mux.HandleFunc("POST /api/v1/follows", jwtAuth(followH.Follow))
@@ -61,13 +83,11 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/v1/feed", jwtAuth(feedH.GetFeed))
 
 	// — Federation (межузловые, аутентификация через X-Replicast-Secret)
+	mux.HandleFunc("GET /.well-known/replicast", fedH.WellKnown)
+	mux.HandleFunc("POST /api/v1/federation/handshake", fedAuth(fedH.Handshake))
 	mux.HandleFunc("POST /api/v1/federation/events", fedAuth(fedH.ReceiveEvent))
-	mux.HandleFunc("POST /api/v1/federation/handshake", fedH.Handshake)
 	mux.HandleFunc("POST /api/v1/federation/follows", fedAuth(fedH.ReceiveFollow))
 	mux.HandleFunc("GET /api/v1/federation/users/{global_id}", fedH.GetRemoteUser)
-
-	// — Node discovery
-	mux.HandleFunc("GET /.well-known/replicast", fedH.WellKnown)
 
 	// — Health
 	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +97,6 @@ func NewRouter(d Deps) http.Handler {
 		})
 	})
 
-	// Глобальные middleware применяются ко всем маршрутам
 	return Chain(mux,
 		Recovery,
 		RequestID,

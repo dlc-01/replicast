@@ -5,8 +5,6 @@ import (
 	"time"
 )
 
-// — Users ──────────────────────────────────────────────────────────
-
 type User struct {
 	ID            string
 	GlobalID      string
@@ -19,42 +17,18 @@ type User struct {
 	CreatedAt     time.Time
 }
 
-type UserRepository interface {
-	Create(ctx context.Context, u User) error
-	GetByID(ctx context.Context, id string) (*User, error)
-	GetByGlobalID(ctx context.Context, globalID string) (*User, error)
-	GetByUsername(ctx context.Context, username string) (*User, error)
-	GetUUIDByGlobalID(ctx context.Context, globalID string) (string, error)
-	UpdateProfile(ctx context.Context, id, displayName, bio string) error
-	UpsertRemote(ctx context.Context, u User) error
-	UsernameExists(ctx context.Context, username string) (bool, error)
-	GetPasswordHash(ctx context.Context, globalID string) (string, error)
-}
-
-// — Posts ──────────────────────────────────────────────────────────
-
 type Post struct {
-	ID         string
-	GlobalID   string
-	AuthorID   string
-	OriginNode string
-	Content    string
-	Visibility string
-	Status     string
-	Version    int
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID         string    `json:"id,omitempty"`
+	GlobalID   string    `json:"global_id"`
+	AuthorID   string    `json:"author_id,omitempty"`
+	OriginNode string    `json:"origin_node"`
+	Content    string    `json:"content"`
+	Visibility string    `json:"visibility"`
+	Status     string    `json:"status,omitempty"`
+	Version    int       `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
-
-type PostRepository interface {
-	Create(ctx context.Context, p Post) error
-	GetByGlobalID(ctx context.Context, globalID string) (*Post, error)
-	Update(ctx context.Context, globalID, content string) (*Post, error)
-	Delete(ctx context.Context, globalID string) (*Post, error)
-	GetFollowerNodes(ctx context.Context, authorID string) ([]string, error)
-}
-
-// — Follows ────────────────────────────────────────────────────────
 
 type Follow struct {
 	ID                 string
@@ -64,15 +38,6 @@ type Follow struct {
 	Status             string
 	CreatedAt          time.Time
 }
-
-type FollowRepository interface {
-	Create(ctx context.Context, f Follow) error
-	Delete(ctx context.Context, followerUserID, targetGlobalID string) error
-	Exists(ctx context.Context, followerUserID, targetGlobalID string) (bool, error)
-	GetFollowees(ctx context.Context, followerUserID string) ([]Follow, error)
-}
-
-// — Feed ───────────────────────────────────────────────────────────
 
 type FeedItem struct {
 	OwnerUserID  string
@@ -88,14 +53,44 @@ type FeedPost struct {
 	CreatedAt      time.Time `json:"created_at"`
 }
 
-type FeedRepository interface {
-	AddItem(ctx context.Context, item FeedItem) error
-	RemoveItem(ctx context.Context, ownerUserID, postGlobalID string) error
-	GetFeed(ctx context.Context, ownerUserID string, limit int) ([]FeedPost, error)
-	GetFollowerUserIDs(ctx context.Context, authorGlobalID string) ([]string, error)
+type Comment struct {
+	ID             string    `json:"id,omitempty"`
+	GlobalID       string    `json:"global_id"`
+	PostGlobalID   string    `json:"post_global_id"`
+	AuthorID       string    `json:"-"`
+	AuthorGlobalID string    `json:"author_global_id"`
+	OriginNode     string    `json:"origin_node"`
+	Content        string    `json:"content"`
+	Status         string    `json:"status,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
-// — Federation ─────────────────────────────────────────────────────
+type Message struct {
+	ID             string    `json:"id,omitempty"`
+	GlobalID       string    `json:"global_id"`
+	ConversationID string    `json:"conversation_id"`
+	SenderID       string    `json:"-"`
+	SenderGlobalID string    `json:"sender_global_id"`
+	Content        string    `json:"content"`
+	Status         string    `json:"status"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type Conversation struct {
+	ID            string     `json:"id"`
+	ParticipantA  string     `json:"participant_a"`
+	ParticipantB  string     `json:"participant_b"`
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+type Node struct {
+	ID           string
+	Name         string
+	BaseURL      string
+	SharedSecret string
+	Status       string
+}
 
 type OutboxEvent struct {
 	EventID    string
@@ -115,12 +110,32 @@ type OutboxRow struct {
 	NextRetryAt time.Time
 }
 
-type Node struct {
-	ID           string
-	Name         string
-	BaseURL      string
-	SharedSecret string
-	Status       string
+type UserRepository interface {
+	Create(ctx context.Context, u User) error
+	GetByID(ctx context.Context, id string) (*User, error)
+	GetByGlobalID(ctx context.Context, globalID string) (*User, error)
+	GetByUsername(ctx context.Context, username string) (*User, error)
+	GetUUIDByGlobalID(ctx context.Context, globalID string) (string, error)
+	UpdateProfile(ctx context.Context, id, displayName, bio string) error
+	UpsertRemote(ctx context.Context, u User) error
+	UsernameExists(ctx context.Context, username string) (bool, error)
+	GetPasswordHash(ctx context.Context, globalID string) (string, error)
+}
+
+type PostRepository interface {
+	Create(ctx context.Context, p Post) error
+	GetByID(ctx context.Context, id string) (*Post, error)
+	GetByGlobalID(ctx context.Context, globalID string) (*Post, error)
+	Update(ctx context.Context, globalID, content string) (*Post, error)
+	Delete(ctx context.Context, globalID string) (*Post, error)
+	GetFollowerNodes(ctx context.Context, authorID string) ([]string, error)
+}
+
+type FeedRepository interface {
+	AddItem(ctx context.Context, item FeedItem) error
+	RemoveItem(ctx context.Context, ownerUserID, postGlobalID string) error
+	GetFeed(ctx context.Context, ownerUserID string, limit int) ([]FeedPost, error)
+	GetFollowerUserIDs(ctx context.Context, authorGlobalID string) ([]string, error)
 }
 
 type FederationRepository interface {

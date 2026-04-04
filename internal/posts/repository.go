@@ -30,12 +30,27 @@ func (r *Repository) Create(ctx context.Context, p port.Post) error {
 	return err
 }
 
-func (r *Repository) GetByGlobalID(ctx context.Context, globalID string) (*port.Post, error) {
+func (r *Repository) GetByID(ctx context.Context, id string) (*port.Post, error) {
 	p := &port.Post{}
 	err := r.db.QueryRow(ctx, `
 		SELECT id, global_id, author_id, origin_node, content, visibility, status, version, created_at, updated_at
-		FROM posts WHERE global_id = $1 AND status = 'active'`,
-		globalID,
+		FROM posts WHERE id = $1 AND status = 'active'`, id,
+	).Scan(
+		&p.ID, &p.GlobalID, &p.AuthorID, &p.OriginNode,
+		&p.Content, &p.Visibility, &p.Status, &p.Version,
+		&p.CreatedAt, &p.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return p, err
+}
+
+func (r *Repository) GetByGlobalID(ctx context.Context, globalID string) (*port.Post, error) {
+	p := &port.Post{}
+	err := r.db.QueryRow(ctx, `
+        SELECT id, global_id, author_id, origin_node, content, visibility, status, version, created_at, updated_at
+        FROM posts WHERE global_id = $1 AND status = 'active'`, globalID,
 	).Scan(
 		&p.ID, &p.GlobalID, &p.AuthorID, &p.OriginNode,
 		&p.Content, &p.Visibility, &p.Status, &p.Version,

@@ -23,9 +23,9 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 func (r *Repository) Create(ctx context.Context, p port.Post) error {
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO posts (global_id, author_id, origin_node, content, visibility)
-		VALUES ($1, $2, $3, $4, $5)`,
-		p.GlobalID, p.AuthorID, p.OriginNode, p.Content, p.Visibility,
+		INSERT INTO posts (global_id, author_id, origin_node, content, visibility, hide_likes)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		p.GlobalID, p.AuthorID, p.OriginNode, p.Content, p.Visibility, p.HideLikes,
 	)
 	return err
 }
@@ -33,11 +33,11 @@ func (r *Repository) Create(ctx context.Context, p port.Post) error {
 func (r *Repository) GetByID(ctx context.Context, id string) (*port.Post, error) {
 	p := &port.Post{}
 	err := r.db.QueryRow(ctx, `
-		SELECT id, global_id, author_id, origin_node, content, visibility, status, version, created_at, updated_at
+		SELECT id, global_id, author_id, origin_node, content, visibility, status, hide_likes, version, created_at, updated_at
 		FROM posts WHERE id = $1 AND status = 'active'`, id,
 	).Scan(
 		&p.ID, &p.GlobalID, &p.AuthorID, &p.OriginNode,
-		&p.Content, &p.Visibility, &p.Status, &p.Version,
+		&p.Content, &p.Visibility, &p.Status, &p.HideLikes, &p.Version,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -49,11 +49,12 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*port.Post, error)
 func (r *Repository) GetByGlobalID(ctx context.Context, globalID string) (*port.Post, error) {
 	p := &port.Post{}
 	err := r.db.QueryRow(ctx, `
-        SELECT id, global_id, author_id, origin_node, content, visibility, status, version, created_at, updated_at
-        FROM posts WHERE global_id = $1 AND status = 'active'`, globalID,
+		SELECT id, global_id, author_id, origin_node, content, visibility, status, hide_likes, version, created_at, updated_at
+		FROM posts WHERE global_id = $1 AND status = 'active'`,
+		globalID,
 	).Scan(
 		&p.ID, &p.GlobalID, &p.AuthorID, &p.OriginNode,
-		&p.Content, &p.Visibility, &p.Status, &p.Version,
+		&p.Content, &p.Visibility, &p.Status, &p.HideLikes, &p.Version,
 		&p.CreatedAt, &p.UpdatedAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {

@@ -44,8 +44,9 @@ func NewRouter(d Deps) http.Handler {
 
 	jwtAuth := RequireAuth(d.Cfg)
 	fedAuth := RequireFedAuth(d.Cfg)
+	optionalAuth := OptionalAuth(d.Cfg)
 
-	// — Auth (публичные)
+	// — Auth
 	mux.HandleFunc("POST /api/v1/auth/register", authH.Register)
 	mux.HandleFunc("POST /api/v1/auth/login", authH.Login)
 
@@ -62,11 +63,11 @@ func NewRouter(d Deps) http.Handler {
 	// — Likes
 	mux.HandleFunc("POST /api/v1/posts/{global_id}/like", jwtAuth(likeH.Like))
 	mux.HandleFunc("DELETE /api/v1/posts/{global_id}/like", jwtAuth(likeH.Unlike))
-	mux.HandleFunc("GET /api/v1/posts/{global_id}/likes", likeH.GetLikes)
+	mux.HandleFunc("GET /api/v1/posts/{global_id}/likes", optionalAuth(likeH.GetLikes))
 
 	// — Comments
 	mux.HandleFunc("POST /api/v1/posts/{global_id}/comments", jwtAuth(commentH.Create))
-	mux.HandleFunc("GET /api/v1/posts/{global_id}/comments", commentH.List)
+	mux.HandleFunc("GET /api/v1/posts/{global_id}/comments", optionalAuth(commentH.List))
 	mux.HandleFunc("DELETE /api/v1/comments/{global_id}", jwtAuth(commentH.Delete))
 
 	// — DMs
@@ -82,7 +83,7 @@ func NewRouter(d Deps) http.Handler {
 	// — Feed
 	mux.HandleFunc("GET /api/v1/feed", jwtAuth(feedH.GetFeed))
 
-	// — Federation (межузловые, аутентификация через X-Replicast-Secret)
+	// — Federation
 	mux.HandleFunc("GET /.well-known/replicast", fedH.WellKnown)
 	mux.HandleFunc("POST /api/v1/federation/handshake", fedAuth(fedH.Handshake))
 	mux.HandleFunc("POST /api/v1/federation/events", fedAuth(fedH.ReceiveEvent))

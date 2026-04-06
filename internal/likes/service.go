@@ -17,6 +17,8 @@ type likeRepo interface {
 	Count(ctx context.Context, postGlobalID string) (int, error)
 	IsLiked(ctx context.Context, userID, postGlobalID string) (bool, error)
 	GetUUIDByGlobalID(ctx context.Context, globalID string) (string, error)
+	GetLikers(ctx context.Context, postGlobalID string) ([]LikerInfo, error)
+	GetPostHideLikes(ctx context.Context, postGlobalID string) (bool, error)
 }
 
 type fedEnqueuer interface {
@@ -89,4 +91,18 @@ func (s *Service) IsLiked(ctx context.Context, userGlobalID, postGlobalID string
 		return false, nil
 	}
 	return s.repo.IsLiked(ctx, userUUID, postGlobalID)
+}
+
+// GetLikers возвращает список пользователей лайкнувших пост.
+// Если hide_likes=true — возвращаем только count, likers=nil.
+func (s *Service) GetLikers(ctx context.Context, postGlobalID string) ([]LikerInfo, bool, error) {
+	hidden, err := s.repo.GetPostHideLikes(ctx, postGlobalID)
+	if err != nil {
+		return nil, false, fmt.Errorf("likes.GetLikers: %w", err)
+	}
+	if hidden {
+		return nil, true, nil
+	}
+	likers, err := s.repo.GetLikers(ctx, postGlobalID)
+	return likers, false, err
 }

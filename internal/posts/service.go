@@ -44,7 +44,7 @@ func NewService(
 	}
 }
 
-func (s *Service) Create(ctx context.Context, authorGlobalID, content string) (*port.Post, error) {
+func (s *Service) Create(ctx context.Context, authorGlobalID, content string, hideLikes bool) (*port.Post, error) {
 	authorUUID, err := s.userRepo.GetUUIDByGlobalID(ctx, authorGlobalID)
 	if err != nil {
 		return nil, fmt.Errorf("posts.Create resolve author: %w", err)
@@ -58,6 +58,7 @@ func (s *Service) Create(ctx context.Context, authorGlobalID, content string) (*
 		OriginNode: s.cfg.NodeName,
 		Content:    content,
 		Visibility: "public",
+		HideLikes:  hideLikes,
 	}
 	if err := s.postRepo.Create(ctx, p); err != nil {
 		return nil, fmt.Errorf("posts.Create: %w", err)

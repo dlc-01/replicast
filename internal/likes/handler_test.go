@@ -115,3 +115,61 @@ func TestLikeHandler_GetLikes_ShowsLikedByMe(t *testing.T) {
 		t.Errorf("liked_by_me = %v, want true", resp["liked_by_me"])
 	}
 }
+
+func TestLikeHandler_GetLikes_WithUsers(t *testing.T) {
+	repo := newMockLikeRepo()
+	repo.hideLikes = false
+	fed := &mockLikeFedEnqueuer{}
+	posts := &mockLikePostGetter{posts: map[string]*port.Post{
+		"post:alice@node-a:001": {GlobalID: "post:alice@node-a:001", OriginNode: "node-a"},
+	}}
+	svc := likes.NewService(repo, fed, posts, logger.Nop(), &config.Config{NodeName: "node-a"})
+	h := likes.NewHandler(svc)
+
+	// Alice лайкает
+	r1 := withLikeIdentity(httptest.NewRequest(http.MethodPost, "/", nil), "alice@node-a")
+	r1.SetPathValue("global_id", "post:alice@node-a:001")
+	h.Like(httptest.NewRecorder(), r1)
+
+	// Запрашиваем лайки
+	r2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	r2.SetPathValue("global_id", "post:alice@node-a:001")
+	w2 := httptest.NewRecorder()
+	h.GetLikes(w2, r2)
+
+	var resp map[string]any
+	json.NewDecoder(w2.Body).Decode(&resp)
+
+	if resp["hidden"] != false {
+		t.Errorf("hidden = %v, want false", resp["hidden"])
+	}
+	if _, ok := resp["users"]; !ok {
+		t.Error("users field should be present when not hidden")
+	}
+}
+
+func TestLikeHandler_GetLikes_Hidden(t *testing.T) {
+	repo := newMockLikeRepo()
+	repo.hideLikes = true
+	fed := &mockLikeFedEnqueuer{}
+	posts := &mockLikePostGetter{posts: map[string]*port.Post{
+		"post:alice@node-a:001": {GlobalID: "post:alice@node-a:001", OriginNode: "node-a"},
+	}}
+	svc := likes.NewService(repo, fed, posts, logger.Nop(), &config.Config{NodeName: "node-a"})
+	h := likes.NewHandler(svc)
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.SetPathValue("global_id", "post:alice@node-a:001")
+	w := httptest.NewRecorder()
+	h.GetLikes(w, r)
+
+	var resp map[string]any
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	if resp["hidden"] != true {
+		t.Errorf("hidden = %v, want true", resp["hidden"])
+	}
+	if _, ok := resp["users"]; ok {
+		t.Error("users field should NOT be present when hidden")
+	}
+}

@@ -25,6 +25,7 @@ type Post struct {
 	Content    string    `json:"content"`
 	Visibility string    `json:"visibility"`
 	Status     string    `json:"status,omitempty"`
+	HideLikes  bool      `json:"hide_likes"`
 	Version    int       `json:"version"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`

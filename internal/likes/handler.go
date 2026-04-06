@@ -69,9 +69,20 @@ func (h *Handler) GetLikes(w http.ResponseWriter, r *http.Request) {
 	userGlobalID, _ := r.Context().Value(ctxkey.UserGlobalID).(string)
 	liked, _ := h.svc.IsLiked(r.Context(), userGlobalID, postGlobalID)
 
-	respond.JSON(w, http.StatusOK, map[string]any{
+	likers, hidden, err := h.svc.GetLikers(r.Context(), postGlobalID)
+	if err != nil {
+		respond.Error(w, r, err)
+		return
+	}
+
+	resp := map[string]any{
 		"post_global_id": postGlobalID,
 		"likes":          count,
 		"liked_by_me":    liked,
-	})
+		"hidden":         hidden,
+	}
+	if !hidden {
+		resp["users"] = likers
+	}
+	respond.JSON(w, http.StatusOK, resp)
 }

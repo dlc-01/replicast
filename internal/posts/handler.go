@@ -21,7 +21,8 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Content string `json:"content"`
+		Content   string `json:"content"`
+		HideLikes bool   `json:"hide_likes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Content == "" {
 		respond.Error(w, r, apperr.BadRequest("invalid_body", "content required"))
@@ -29,7 +30,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// globalID резолвится в UUID внутри сервиса через userRepo
-	p, err := h.svc.Create(r.Context(), globalID, req.Content)
+	p, err := h.svc.Create(r.Context(), globalID, req.Content, req.HideLikes)
 	if err != nil {
 		respond.Error(w, r, err)
 		return

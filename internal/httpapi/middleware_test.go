@@ -20,8 +20,6 @@ func testConfig() *config.Config {
 	}
 }
 
-// makeToken создаёт JWT с правильными полями:
-// sub = UUID, global_id = "alice@node-a" — именно так делает auth.Service.
 func makeToken(secret, globalID string, exp time.Time) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub":       "some-uuid-of-user",
@@ -32,7 +30,6 @@ func makeToken(secret, globalID string, exp time.Time) string {
 	return signed
 }
 
-// makeTokenNoGlobalID — токен без global_id claim (для теста невалидного токена).
 func makeTokenNoGlobalID(secret string, exp time.Time) string {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"sub": "some-uuid",
@@ -45,7 +42,6 @@ func makeTokenNoGlobalID(secret string, exp time.Time) string {
 func TestRequireAuth(t *testing.T) {
 	cfg := testConfig()
 
-	// Хендлер читает global_id из контекста и пишет его в тело ответа
 	handler := httpapi.RequireAuth(cfg)(func(w http.ResponseWriter, r *http.Request) {
 		globalID, _ := r.Context().Value(ctxkey.UserGlobalID).(string)
 		w.Write([]byte(globalID))
@@ -105,8 +101,7 @@ func TestRequireAuth(t *testing.T) {
 			handler(w, r)
 
 			if w.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d\nbody: %s",
-					w.Code, tt.wantStatus, w.Body.String())
+				t.Errorf("status = %d, want %d\nbody: %s", w.Code, tt.wantStatus, w.Body.String())
 			}
 			if tt.wantBody != "" && w.Body.String() != tt.wantBody {
 				t.Errorf("body = %q, want %q", w.Body.String(), tt.wantBody)
@@ -144,6 +139,89 @@ func TestRequireFedAuth(t *testing.T) {
 	}
 }
 
+// — OptionalAuth ───────────────────────────────────────────────────────
+
+func TestOptionalAuth_WithValidToken_SetsGlobalID(t *testing.T) {
+	cfg := testConfig()
+	var gotGlobalID string
+	handler := httpapi.OptionalAuth(cfg)(func(w http.ResponseWriter, r *http.Request) {
+		gotGlobalID, _ = r.Context().Value(ctxkey.UserGlobalID).(string)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+makeToken(cfg.JWTSecret, "alice@node-a", time.Now().Add(time.Hour)))
+	handler(httptest.NewRecorder(), r)
+
+	if gotGlobalID != "alice@node-a" {
+		t.Errorf("global_id = %q, want alice@node-a", gotGlobalID)
+	}
+}
+
+func TestOptionalAuth_WithoutToken_Returns200(t *testing.T) {
+	cfg := testConfig()
+	var gotGlobalID string
+	handler := httpapi.OptionalAuth(cfg)(func(w http.ResponseWriter, r *http.Request) {
+		gotGlobalID, _ = r.Context().Value(ctxkey.UserGlobalID).(string)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+	if gotGlobalID != "" {
+		t.Errorf("global_id should be empty without token, got %q", gotGlobalID)
+	}
+}
+
+func TestOptionalAuth_WithInvalidToken_Returns200(t *testing.T) {
+	cfg := testConfig()
+	var gotGlobalID string
+	handler := httpapi.OptionalAuth(cfg)(func(w http.ResponseWriter, r *http.Request) {
+		gotGlobalID, _ = r.Context().Value(ctxkey.UserGlobalID).(string)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer invalid.token.here")
+	w := httptest.NewRecorder()
+	handler(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 — invalid token should not block", w.Code)
+	}
+	if gotGlobalID != "" {
+		t.Errorf("global_id should be empty with invalid token, got %q", gotGlobalID)
+	}
+}
+
+func TestOptionalAuth_WithExpiredToken_Returns200(t *testing.T) {
+	cfg := testConfig()
+	var gotGlobalID string
+	handler := httpapi.OptionalAuth(cfg)(func(w http.ResponseWriter, r *http.Request) {
+		gotGlobalID, _ = r.Context().Value(ctxkey.UserGlobalID).(string)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Authorization", "Bearer "+makeToken(cfg.JWTSecret, "alice@node-a", time.Now().Add(-time.Hour)))
+	w := httptest.NewRecorder()
+	handler(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200 — expired token should not block", w.Code)
+	}
+	if gotGlobalID != "" {
+		t.Errorf("global_id should be empty with expired token, got %q", gotGlobalID)
+	}
+}
+
+// — Recovery, RequestID, Logging ──────────────────────────────────────
+
 func TestRecovery_CatchesPanic(t *testing.T) {
 	handler := httpapi.Recovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("test panic")
@@ -152,7 +230,6 @@ func TestRecovery_CatchesPanic(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 
-	// Не должен паниковать
 	if !t.Run("no panic", func(t *testing.T) {
 		handler.ServeHTTP(w, r)
 	}) {
@@ -177,7 +254,7 @@ func TestRequestID_SetsHeader(t *testing.T) {
 		handler.ServeHTTP(w, r)
 
 		if w.Header().Get("X-Request-ID") != "my-request-id" {
-			t.Errorf("X-Request-ID header = %q, want my-request-id", w.Header().Get("X-Request-ID"))
+			t.Errorf("X-Request-ID = %q, want my-request-id", w.Header().Get("X-Request-ID"))
 		}
 		if w.Body.String() != "my-request-id" {
 			t.Errorf("context request_id = %q, want my-request-id", w.Body.String())

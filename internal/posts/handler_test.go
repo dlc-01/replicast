@@ -19,7 +19,7 @@ func withPostIdentity(r *http.Request, globalID string) *http.Request {
 
 func newHandlerSvc() *posts.Service {
 	userRepo := &mockUserResolver{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	return newSvc(newMockPostRepo(), userRepo)
+	return newPostSvc(newMockPostRepo(), userRepo)
 }
 
 // — Create ─────────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ func TestPostHandler_Get_Found(t *testing.T) {
 		GlobalID: "post:alice@node-a:001",
 		Content:  "hello",
 	}
-	h := posts.NewHandler(newSvc(postRepo, &mockUserResolver{}))
+	h := posts.NewHandler(newPostSvc(postRepo, &mockUserResolver{}))
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/posts/post:alice@node-a:001", nil)
 	r.SetPathValue("id", "post:alice@node-a:001")
@@ -127,7 +127,7 @@ func TestPostHandler_Update_Success(t *testing.T) {
 		Content:  "original",
 	}
 	userRepo := &mockUserResolver{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	h := posts.NewHandler(newSvc(postRepo, userRepo))
+	h := posts.NewHandler(newPostSvc(postRepo, userRepo))
 
 	body, _ := json.Marshal(map[string]string{"content": "updated"})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/posts/post:alice@node-a:001", bytes.NewReader(body))
@@ -151,7 +151,7 @@ func TestPostHandler_Update_Forbidden(t *testing.T) {
 		"alice@node-a": "uuid-alice",
 		"bob@node-a":   "uuid-bob",
 	}}
-	h := posts.NewHandler(newSvc(postRepo, userRepo))
+	h := posts.NewHandler(newPostSvc(postRepo, userRepo))
 
 	body, _ := json.Marshal(map[string]string{"content": "hacked"})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/posts/post:alice@node-a:001", bytes.NewReader(body))
@@ -174,7 +174,7 @@ func TestPostHandler_Delete_Success(t *testing.T) {
 		AuthorID: "uuid-alice",
 	}
 	userRepo := &mockUserResolver{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
-	h := posts.NewHandler(newSvc(postRepo, userRepo))
+	h := posts.NewHandler(newPostSvc(postRepo, userRepo))
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/posts/post:alice@node-a:001", nil)
 	r.SetPathValue("id", "post:alice@node-a:001")
@@ -197,7 +197,7 @@ func TestPostHandler_Delete_Forbidden(t *testing.T) {
 		"alice@node-a": "uuid-alice",
 		"bob@node-a":   "uuid-bob",
 	}}
-	h := posts.NewHandler(newSvc(postRepo, userRepo))
+	h := posts.NewHandler(newPostSvc(postRepo, userRepo))
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/posts/post:alice@node-a:001", nil)
 	r.SetPathValue("id", "post:alice@node-a:001")

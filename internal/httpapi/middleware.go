@@ -17,7 +17,6 @@ import (
 	"github.com/dlc-01/replicast/internal/respond"
 )
 
-// Chain объединяет middleware справа налево: первый в списке — самый внешний.
 func Chain(h http.Handler, middlewares ...func(http.Handler) http.Handler) http.Handler {
 	for i := len(middlewares) - 1; i >= 0; i-- {
 		h = middlewares[i](h)
@@ -25,7 +24,6 @@ func Chain(h http.Handler, middlewares ...func(http.Handler) http.Handler) http.
 	return h
 }
 
-// Logging логирует каждый запрос: метод, путь, статус, latency.
 func Logging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -42,7 +40,6 @@ func Logging(next http.Handler) http.Handler {
 	})
 }
 
-// Recovery перехватывает panic и возвращает 500.
 func Recovery(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -60,7 +57,6 @@ func Recovery(next http.Handler) http.Handler {
 	})
 }
 
-// RequestID добавляет X-Request-ID в контекст и ответ.
 func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-ID")
@@ -74,8 +70,6 @@ func RequestID(next http.Handler) http.Handler {
 }
 
 // RequireAuth валидирует JWT и кладёт global_id в контекст.
-// JWT содержит два поля: sub (UUID) и global_id (alice@node-a).
-// В контекст кладём global_id — именно его ожидают все хендлеры.
 func RequireAuth(cfg *config.Config) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +97,6 @@ func RequireAuth(cfg *config.Config) func(http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 
-			// global_id — это alice@node-a, не UUID
-			// sub — это UUID пользователя (для внутренних операций с БД)
 			globalID, _ := claims["global_id"].(string)
 			if globalID == "" {
 				respond.Error(w, r, apperr.Unauthorized("invalid_token", "missing global_id claim"))
@@ -113,6 +105,34 @@ func RequireAuth(cfg *config.Config) func(http.HandlerFunc) http.HandlerFunc {
 
 			ctx := context.WithValue(r.Context(), ctxkey.UserGlobalID, globalID)
 			next(w, r.WithContext(ctx))
+		}
+	}
+}
+
+// OptionalAuth парсит JWT если он есть, но не возвращает 401 если его нет.
+// Используется для публичных эндпоинтов где авторизация улучшает ответ (liked_by_me).
+func OptionalAuth(cfg *config.Config) func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			header := r.Header.Get("Authorization")
+			if strings.HasPrefix(header, "Bearer ") {
+				tokenStr := strings.TrimPrefix(header, "Bearer ")
+				token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (any, error) {
+					if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+						return nil, apperr.Unauthorized("invalid_token", "unexpected signing method")
+					}
+					return []byte(cfg.JWTSecret), nil
+				})
+				if err == nil && token.Valid {
+					if claims, ok := token.Claims.(jwt.MapClaims); ok {
+						if globalID, _ := claims["global_id"].(string); globalID != "" {
+							ctx := context.WithValue(r.Context(), ctxkey.UserGlobalID, globalID)
+							r = r.WithContext(ctx)
+						}
+					}
+				}
+			}
+			next(w, r)
 		}
 	}
 }

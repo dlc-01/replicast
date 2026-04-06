@@ -12,8 +12,9 @@ import (
 )
 
 type mockLikeRepo struct {
-	liked map[string]map[string]bool // postGlobalID → userID → bool
-	uuids map[string]string
+	liked     map[string]map[string]bool
+	uuids     map[string]string
+	hideLikes bool
 }
 
 func newMockLikeRepo() *mockLikeRepo {
@@ -158,5 +159,64 @@ func TestLikeService_UserNotFound(t *testing.T) {
 	err := svc.Like(context.Background(), "nobody@node-x", "post:alice@node-a:001")
 	if err == nil {
 		t.Error("expected error for unknown user")
+	}
+}
+
+// — Тесты GetLikers ───────────────────────────────────────────────────
+
+func (m *mockLikeRepo) GetLikers(_ context.Context, postGlobalID string) ([]likes.LikerInfo, error) {
+	var out []likes.LikerInfo
+	for userID := range m.liked[postGlobalID] {
+		out = append(out, likes.LikerInfo{GlobalID: userID, DisplayName: ""})
+	}
+	return out, nil
+}
+
+func (m *mockLikeRepo) GetPostHideLikes(_ context.Context, _ string) (bool, error) {
+	return m.hideLikes, nil
+}
+
+func TestLikeService_GetLikers_Visible(t *testing.T) {
+	repo := newMockLikeRepo()
+	repo.hideLikes = false
+	posts := &mockLikePostGetter{posts: map[string]*port.Post{
+		"post:alice@node-a:001": {GlobalID: "post:alice@node-a:001", OriginNode: "node-a"},
+	}}
+	svc := newLikeSvc(repo, &mockLikeFedEnqueuer{}, posts)
+
+	_ = svc.Like(context.Background(), "alice@node-a", "post:alice@node-a:001")
+	_ = svc.Like(context.Background(), "bob@node-b", "post:alice@node-a:001")
+
+	likers, hidden, err := svc.GetLikers(context.Background(), "post:alice@node-a:001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if hidden {
+		t.Error("expected hidden=false")
+	}
+	if len(likers) != 2 {
+		t.Errorf("likers = %d, want 2", len(likers))
+	}
+}
+
+func TestLikeService_GetLikers_Hidden(t *testing.T) {
+	repo := newMockLikeRepo()
+	repo.hideLikes = true
+	posts := &mockLikePostGetter{posts: map[string]*port.Post{
+		"post:alice@node-a:001": {GlobalID: "post:alice@node-a:001", OriginNode: "node-a"},
+	}}
+	svc := newLikeSvc(repo, &mockLikeFedEnqueuer{}, posts)
+
+	_ = svc.Like(context.Background(), "alice@node-a", "post:alice@node-a:001")
+
+	likers, hidden, err := svc.GetLikers(context.Background(), "post:alice@node-a:001")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hidden {
+		t.Error("expected hidden=true")
+	}
+	if likers != nil {
+		t.Error("likers should be nil when hidden")
 	}
 }

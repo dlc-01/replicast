@@ -38,6 +38,7 @@ CREATE TABLE posts (
                        visibility  TEXT NOT NULL DEFAULT 'public',
                        status      TEXT NOT NULL DEFAULT 'active',  -- active | deleted
                        version     INT  NOT NULL DEFAULT 1,          -- для разрешения конфликтов
+                       hide_likes BOOLEAN NOT NULL DEFAULT false,
                        created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
                        updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -140,6 +141,7 @@ CREATE TABLE messages (
 );
 
 CREATE INDEX messages_conv_idx ON messages (conversation_id, created_at DESC);
+
 
 -- +goose Down
 DROP TABLE IF EXISTS processed_events;

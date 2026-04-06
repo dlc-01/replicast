@@ -19,7 +19,6 @@ func newTestClient() *federation.Client {
 }
 
 func TestClient_FetchWellKnown_Success(t *testing.T) {
-	// Поднимаем тестовый HTTP сервер имитирующий удалённый узел
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/.well-known/replicast" {
 			http.NotFound(w, r)
@@ -34,7 +33,6 @@ func TestClient_FetchWellKnown_Success(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient()
-	// srv.URL уже содержит http://127.0.0.1:PORT — передаём как nodeName с портом
 	nodeName := srv.URL[7:] // убираем "http://"
 
 	wk, err := client.FetchWellKnown(context.Background(), nodeName)
@@ -55,19 +53,14 @@ func TestClient_FetchWellKnown_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestClient()
-	nodeName := srv.URL[7:]
-
-	_, err := client.FetchWellKnown(context.Background(), nodeName)
+	_, err := newTestClient().FetchWellKnown(context.Background(), srv.URL[7:])
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}
 }
 
 func TestClient_FetchWellKnown_ConnectionRefused(t *testing.T) {
-	client := newTestClient()
-
-	_, err := client.FetchWellKnown(context.Background(), "localhost:19999")
+	_, err := newTestClient().FetchWellKnown(context.Background(), "localhost:19999")
 	if err == nil {
 		t.Error("expected error for refused connection")
 	}
@@ -83,10 +76,7 @@ func TestClient_FetchWellKnownInfo_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestClient()
-	nodeName := srv.URL[7:]
-
-	node, baseURL, err := client.FetchWellKnownInfo(context.Background(), nodeName)
+	node, baseURL, err := newTestClient().FetchWellKnownInfo(context.Background(), srv.URL[7:])
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -115,10 +105,8 @@ func TestClient_SendEvent_Success(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestClient()
 	payload, _ := json.Marshal(map[string]string{"key": "value"})
-
-	err := client.SendEvent(context.Background(), srv.URL, "secret", federation.EventPayload{
+	err := newTestClient().SendEvent(context.Background(), srv.URL, "secret", federation.EventPayload{
 		EventID:    "evt-001",
 		EventType:  "post.created",
 		SourceNode: "node-a",
@@ -142,9 +130,35 @@ func TestClient_SendEvent_WrongSecret(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := newTestClient()
-	err := client.SendEvent(context.Background(), srv.URL, "wrong-secret", federation.EventPayload{})
+	err := newTestClient().SendEvent(context.Background(), srv.URL, "wrong-secret", federation.EventPayload{})
 	if err == nil {
 		t.Error("expected error for wrong secret")
+	}
+}
+
+func TestClient_SendEvent_AddsHMACHeaders(t *testing.T) {
+	var gotNode, gotTimestamp, gotSig string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotNode = r.Header.Get("X-Replicast-Node")
+		gotTimestamp = r.Header.Get("X-Replicast-Timestamp")
+		gotSig = r.Header.Get("X-Replicast-Signature")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	payload, _ := json.Marshal(map[string]string{})
+	newTestClient().SendEvent(context.Background(), srv.URL, "secret", federation.EventPayload{
+		EventID: "evt-001", EventType: "post.created", Payload: payload,
+	})
+
+	if gotNode != "node-a" {
+		t.Errorf("X-Replicast-Node = %q, want node-a", gotNode)
+	}
+	if gotTimestamp == "" {
+		t.Error("X-Replicast-Timestamp should be set")
+	}
+	if gotSig == "" {
+		t.Error("X-Replicast-Signature should be set")
 	}
 }

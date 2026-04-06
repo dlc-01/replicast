@@ -13,8 +13,13 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// Follow — POST /api/v1/follows
 func (h *Handler) Follow(w http.ResponseWriter, r *http.Request) {
 	followerGlobalID, _ := r.Context().Value(ctxkey.UserGlobalID).(string)
+	if followerGlobalID == "" {
+		respond.Error(w, r, apperr.Unauthorized("missing_identity", "no identity in context"))
+		return
+	}
 
 	var req struct {
 		TargetGlobalID string `json:"target_global_id"`
@@ -31,9 +36,19 @@ func (h *Handler) Follow(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Unfollow — DELETE /api/v1/follows/{target}
 func (h *Handler) Unfollow(w http.ResponseWriter, r *http.Request) {
 	followerGlobalID, _ := r.Context().Value(ctxkey.UserGlobalID).(string)
+	if followerGlobalID == "" {
+		respond.Error(w, r, apperr.Unauthorized("missing_identity", "no identity in context"))
+		return
+	}
+
 	target := r.PathValue("target")
+	if target == "" {
+		respond.Error(w, r, apperr.BadRequest("missing_param", "target required"))
+		return
+	}
 
 	if err := h.svc.Unfollow(r.Context(), followerGlobalID, target); err != nil {
 		respond.Error(w, r, err)

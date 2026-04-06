@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/dlc-01/replicast/internal/auth"
 	"github.com/dlc-01/replicast/internal/comments"
@@ -53,6 +54,7 @@ func NewRouter(d Deps) http.Handler {
 	// — Users
 	mux.HandleFunc("GET /api/v1/users/{username}", userH.GetProfile)
 	mux.HandleFunc("PUT /api/v1/users/me", jwtAuth(userH.UpdateProfile))
+	mux.HandleFunc("GET /api/v1/users/{username}/key", userH.GetPublicKey)
 
 	// — Posts
 	mux.HandleFunc("POST /api/v1/posts", jwtAuth(postH.Create))
@@ -83,11 +85,13 @@ func NewRouter(d Deps) http.Handler {
 	// — Feed
 	mux.HandleFunc("GET /api/v1/feed", jwtAuth(feedH.GetFeed))
 
-	// — Federation
+	verifyHMAC := VerifyHMAC(d.Cfg)
+
+	// — Federation (межузловые)
 	mux.HandleFunc("GET /.well-known/replicast", fedH.WellKnown)
-	mux.HandleFunc("POST /api/v1/federation/handshake", fedAuth(fedH.Handshake))
-	mux.HandleFunc("POST /api/v1/federation/events", fedAuth(fedH.ReceiveEvent))
-	mux.HandleFunc("POST /api/v1/federation/follows", fedAuth(fedH.ReceiveFollow))
+	mux.HandleFunc("POST /api/v1/federation/handshake", fedAuth(verifyHMAC(fedH.Handshake)))
+	mux.HandleFunc("POST /api/v1/federation/events", fedAuth(verifyHMAC(fedH.ReceiveEvent)))
+	mux.HandleFunc("POST /api/v1/federation/follows", fedAuth(verifyHMAC(fedH.ReceiveFollow)))
 	mux.HandleFunc("GET /api/v1/federation/users/{global_id}", fedH.GetRemoteUser)
 
 	// — Health
@@ -98,9 +102,11 @@ func NewRouter(d Deps) http.Handler {
 		})
 	})
 
+	rl := NewRateLimiter(100, time.Minute)
 	return Chain(mux,
 		Recovery,
 		RequestID,
 		Logging,
+		RateLimit(rl),
 	)
 }

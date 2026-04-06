@@ -10,7 +10,7 @@ import (
 type Config struct {
 	NodeName        string
 	BaseURL         string
-	InternalBaseURL string // для межузлового общения внутри Docker сети
+	InternalBaseURL string
 	Port            string
 	DatabaseURL     string
 	JWTSecret       string
@@ -18,6 +18,7 @@ type Config struct {
 	OutboxInterval  time.Duration
 	LogFormat       string
 	LogLevel        string
+	NodeKeyPath     string // путь к файлу с RSA приватным ключом узла (опционально)
 }
 
 func Load() (*Config, error) {
@@ -32,6 +33,7 @@ func Load() (*Config, error) {
 		LogFormat:       getEnv("LOG_FORMAT", "json"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		OutboxInterval:  parseMillis(getEnv("OUTBOX_INTERVAL_MS", "5000")),
+		NodeKeyPath:     getEnv("NODE_KEY_PATH", ""),
 	}
 	// Если INTERNAL_BASE_URL не задан — используем BASE_URL
 	if cfg.InternalBaseURL == "" {

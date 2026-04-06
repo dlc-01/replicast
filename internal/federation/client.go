@@ -10,14 +10,13 @@ import (
 	"time"
 
 	"github.com/dlc-01/replicast/internal/config"
+	"github.com/dlc-01/replicast/internal/signing"
 )
 
-// EventSender — интерфейс для отправки событий на удалённые узлы.
 type EventSender interface {
 	SendEvent(ctx context.Context, baseURL, sharedSecret string, e EventPayload) error
 }
 
-// NodeDiscoverer — интерфейс для discovery удалённого узла через /.well-known/replicast.
 type NodeDiscoverer interface {
 	FetchWellKnown(ctx context.Context, nodeName string) (*WellKnownResponse, error)
 }
@@ -35,7 +34,6 @@ type WellKnownResponse struct {
 	Version string `json:"version"`
 }
 
-// Client — HTTP реализация EventSender и NodeDiscoverer.
 type Client struct {
 	http *http.Client
 	cfg  *config.Config
@@ -67,6 +65,11 @@ func (c *Client) SendEvent(ctx context.Context, baseURL, sharedSecret string, e 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Replicast-Secret", sharedSecret)
 
+	// HMAC подпись — целостность тела и защита от replay атак
+	if err := signing.SignRequest(req, c.cfg.NodeName, sharedSecret); err != nil {
+		return fmt.Errorf("client.SendEvent sign: %w", err)
+	}
+
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("client.SendEvent http: %w", err)
@@ -79,9 +82,6 @@ func (c *Client) SendEvent(ctx context.Context, baseURL, sharedSecret string, e 
 	return nil
 }
 
-// FetchWellKnown получает метаданные узла через /.well-known/replicast.
-// nodeName может быть доменом (vasya.ru) или host:port (localhost:8082).
-// Автоматически определяет схему — https для доменов без порта, http для host:port.
 func (c *Client) FetchWellKnown(ctx context.Context, nodeName string) (*WellKnownResponse, error) {
 	baseURL := nodeNameToBaseURL(nodeName)
 	url := baseURL + "/.well-known/replicast"
@@ -109,28 +109,20 @@ func (c *Client) FetchWellKnown(ctx context.Context, nodeName string) (*WellKnow
 }
 
 // nodeNameToBaseURL превращает имя узла в base URL.
-// vasya.ru           → https://vasya.ru  (прод — чистый домен с точкой)
-// localhost:8082     → http://localhost:8082 (dev с портом)
-// node-a:8080        → http://node-a:8080 (Docker с портом)
-// node-a             → http://node-a:8080 (Docker без порта — добавляем дефолтный порт)
 func nodeNameToBaseURL(nodeName string) string {
 	if strings.HasPrefix(nodeName, "http://") || strings.HasPrefix(nodeName, "https://") {
 		return nodeName
 	}
-	// host:port → http (dev/docker окружение)
 	if strings.Contains(nodeName, ":") {
 		return "http://" + nodeName
 	}
-	// содержит точку → настоящий домен → https (прод)
 	if strings.Contains(nodeName, ".") {
 		return "https://" + nodeName
 	}
-	// простое имя без точки и порта → Docker service name → http + дефолтный порт
 	return "http://" + nodeName + ":8080"
 }
 
 // FetchWellKnownInfo реализует follows.FedDiscoverer.
-// Возвращает node name и base_url удалённого узла.
 func (c *Client) FetchWellKnownInfo(ctx context.Context, nodeName string) (node, baseURL string, err error) {
 	wk, err := c.FetchWellKnown(ctx, nodeName)
 	if err != nil {

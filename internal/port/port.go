@@ -6,15 +6,16 @@ import (
 )
 
 type User struct {
-	ID            string
-	GlobalID      string
-	LocalUsername string
-	HomeNode      string
-	DisplayName   string
-	Bio           string
-	PasswordHash  string
-	IsLocal       bool
-	CreatedAt     time.Time
+	ID            string    `json:"id,omitempty"`
+	GlobalID      string    `json:"global_id"`
+	LocalUsername string    `json:"username,omitempty"`
+	HomeNode      string    `json:"home_node"`
+	DisplayName   string    `json:"display_name,omitempty"`
+	Bio           string    `json:"bio,omitempty"`
+	PasswordHash  string    `json:"-"`
+	PublicKey     string    `json:"public_key,omitempty"` // RSA публичный ключ для E2E
+	IsLocal       bool      `json:"is_local"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type Post struct {
@@ -81,16 +82,19 @@ type Conversation struct {
 	ID            string     `json:"id"`
 	ParticipantA  string     `json:"participant_a"`
 	ParticipantB  string     `json:"participant_b"`
+	SessionKeyA   string     `json:"session_key_a,omitempty"` // AES key зашифрованный для participant_a
+	SessionKeyB   string     `json:"session_key_b,omitempty"` // AES key зашифрованный для participant_b
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
 	CreatedAt     time.Time  `json:"created_at"`
 }
 
 type Node struct {
-	ID           string
-	Name         string
-	BaseURL      string
-	SharedSecret string
-	Status       string
+	ID           string `json:"id,omitempty"`
+	Name         string `json:"name"`
+	BaseURL      string `json:"base_url"`
+	SharedSecret string `json:"-"`
+	PublicKey    string `json:"public_key,omitempty"`
+	Status       string `json:"status,omitempty"`
 }
 
 type OutboxEvent struct {

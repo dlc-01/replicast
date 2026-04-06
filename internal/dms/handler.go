@@ -24,13 +24,15 @@ func (h *Handler) StartConversation(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		RecipientGlobalID string `json:"recipient_global_id"`
+		SessionKeyForMe   string `json:"session_key_for_me"`   // AES key зашифрованный моим RSA ключом
+		SessionKeyForThem string `json:"session_key_for_them"` // AES key зашифрованный их RSA ключом
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RecipientGlobalID == "" {
 		respond.Error(w, r, apperr.BadRequest("invalid_body", "recipient_global_id required"))
 		return
 	}
 
-	conv, err := h.svc.StartConversation(r.Context(), senderGlobalID, req.RecipientGlobalID)
+	conv, err := h.svc.StartConversation(r.Context(), senderGlobalID, req.RecipientGlobalID, req.SessionKeyForMe, req.SessionKeyForThem)
 	if err != nil {
 		respond.Error(w, r, err)
 		return

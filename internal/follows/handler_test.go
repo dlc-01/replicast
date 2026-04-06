@@ -13,7 +13,6 @@ import (
 	"github.com/dlc-01/replicast/internal/port"
 )
 
-// newHandlerSvc — сервис с alice и известным node-b для handler тестов.
 func newHandlerSvc() *follows.Service {
 	userRepo := &mockUserLookup{uuids: map[string]string{"alice@node-a": "uuid-alice"}}
 	nodeRepo := newMockNodeRegistry()
@@ -25,11 +24,10 @@ func newHandlerSvc() *follows.Service {
 }
 
 func withIdentity(r *http.Request, globalID string) *http.Request {
-	ctx := context.WithValue(r.Context(), ctxkey.UserGlobalID, globalID)
-	return r.WithContext(ctx)
+	return r.WithContext(context.WithValue(r.Context(), ctxkey.UserGlobalID, globalID))
 }
 
-// — Follow handler ────────────────────────────────────────────────────
+// — Follow ────────────────────────────────────────────────────────────
 
 func TestFollowHandler_Follow(t *testing.T) {
 	tests := []struct {
@@ -79,12 +77,10 @@ func TestFollowHandler_Follow(t *testing.T) {
 			r.Header.Set("Content-Type", "application/json")
 			r = withIdentity(r, tt.identity)
 			w := httptest.NewRecorder()
-
 			h.Follow(w, r)
 
 			if w.Code != tt.wantStatus {
-				t.Errorf("status = %d, want %d\nbody: %s",
-					w.Code, tt.wantStatus, w.Body.String())
+				t.Errorf("status = %d, want %d\nbody: %s", w.Code, tt.wantStatus, w.Body.String())
 			}
 		})
 	}
@@ -99,7 +95,7 @@ func TestFollowHandler_Follow_Duplicate(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	h.Follow(w1, r1)
 	if w1.Code != http.StatusNoContent {
-		t.Fatalf("first follow: got %d, want %d", w1.Code, http.StatusNoContent)
+		t.Fatalf("first follow: got %d, want 204\nbody: %s", w1.Code, w1.Body.String())
 	}
 
 	r2 := withIdentity(httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body)), "alice@node-a")
@@ -107,11 +103,11 @@ func TestFollowHandler_Follow_Duplicate(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	h.Follow(w2, r2)
 	if w2.Code != http.StatusConflict {
-		t.Errorf("duplicate follow: got %d, want %d", w2.Code, http.StatusConflict)
+		t.Errorf("duplicate follow: got %d, want 409", w2.Code)
 	}
 }
 
-// — Unfollow handler ──────────────────────────────────────────────────
+// — Unfollow ──────────────────────────────────────────────────────────
 
 func TestFollowHandler_Unfollow(t *testing.T) {
 	svc := newHandlerSvc()
@@ -123,11 +119,10 @@ func TestFollowHandler_Unfollow(t *testing.T) {
 	r.SetPathValue("target", "bob@node-a")
 	r = withIdentity(r, "alice@node-a")
 	w := httptest.NewRecorder()
-
 	h.Unfollow(w, r)
 
 	if w.Code != http.StatusNoContent {
-		t.Errorf("status = %d, want %d\nbody: %s", w.Code, http.StatusNoContent, w.Body.String())
+		t.Errorf("status = %d, want 204\nbody: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -138,11 +133,10 @@ func TestFollowHandler_Unfollow_NotFollowing(t *testing.T) {
 	r.SetPathValue("target", "bob@node-a")
 	r = withIdentity(r, "alice@node-a")
 	w := httptest.NewRecorder()
-
 	h.Unfollow(w, r)
 
 	if w.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusNotFound)
+		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
 
@@ -153,10 +147,9 @@ func TestFollowHandler_NoIdentity(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/follows", bytes.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-
 	h.Follow(w, r)
 
-	if w.Code == http.StatusNoContent {
-		t.Error("should not succeed with empty identity")
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
 	}
 }

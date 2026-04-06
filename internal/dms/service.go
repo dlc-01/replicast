@@ -14,7 +14,7 @@ import (
 )
 
 type dmRepo interface {
-	GetOrCreateConversation(ctx context.Context, a, b string) (*port.Conversation, error)
+	GetOrCreateConversation(ctx context.Context, a, b, sessionKeyA, sessionKeyB string) (*port.Conversation, error)
 	GetConversation(ctx context.Context, id string) (*port.Conversation, error)
 	ListConversations(ctx context.Context, userGlobalID string) ([]port.Conversation, error)
 	CreateMessage(ctx context.Context, m port.Message) error
@@ -38,11 +38,11 @@ func NewService(repo dmRepo, fedRepo fedEnqueuer, log logger.Logger, cfg *config
 	return &Service{repo: repo, fedRepo: fedRepo, log: log, cfg: cfg}
 }
 
-func (s *Service) StartConversation(ctx context.Context, senderGlobalID, recipientGlobalID string) (*port.Conversation, error) {
+func (s *Service) StartConversation(ctx context.Context, senderGlobalID, recipientGlobalID, sessionKeyForMe, sessionKeyForThem string) (*port.Conversation, error) {
 	if senderGlobalID == recipientGlobalID {
 		return nil, apperr.BadRequest("self_message", "cannot message yourself")
 	}
-	conv, err := s.repo.GetOrCreateConversation(ctx, senderGlobalID, recipientGlobalID)
+	conv, err := s.repo.GetOrCreateConversation(ctx, senderGlobalID, recipientGlobalID, sessionKeyForMe, sessionKeyForThem)
 	if err != nil {
 		return nil, fmt.Errorf("dms.StartConversation: %w", err)
 	}

@@ -5,6 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- Реестр известных узлов сети
 CREATE TABLE nodes (
                        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                       public_key TEXT NOT NULL,
                        name          TEXT NOT NULL UNIQUE,
                        base_url      TEXT NOT NULL UNIQUE,
                        shared_secret TEXT NOT NULL,
@@ -15,6 +16,7 @@ CREATE TABLE nodes (
 -- Пользователи — локальные (is_local=true) и удалённые (is_local=false)
 CREATE TABLE users (
                        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                       public_key TEXT,
                        global_id      TEXT NOT NULL UNIQUE,        -- alice@node-a
                        local_username TEXT,                         -- только для локальных
                        home_node      TEXT NOT NULL,
@@ -122,6 +124,8 @@ CREATE TABLE conversations (
                                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                                participant_a   TEXT NOT NULL,  -- global_id
                                participant_b   TEXT NOT NULL,  -- global_id
+                               session_key_a TEXT,  -- session key зашифрованный для participant_a
+                               session_key_b TEXT,  -- session key зашифрованный для participant_b
                                last_message_at TIMESTAMPTZ,
                                created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
                                UNIQUE (participant_a, participant_b)

@@ -16,30 +16,43 @@ type Repository struct{ db *pgxpool.Pool }
 
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
-func (r *Repository) GetOrCreateConversation(ctx context.Context, a, b string) (*port.Conversation, error) {
-	// Нормализуем порядок участников для уникального ключа
+func (r *Repository) GetOrCreateConversation(ctx context.Context, a, b, sessionKeyA, sessionKeyB string) (*port.Conversation, error) {
 	pa, pb := a, b
+	skA, skB := sessionKeyA, sessionKeyB
 	if a > b {
 		pa, pb = b, a
+		skA, skB = sessionKeyB, sessionKeyA
 	}
 
 	conv := &port.Conversation{}
 	err := r.db.QueryRow(ctx, `
-		INSERT INTO conversations (participant_a, participant_b)
-		VALUES ($1, $2)
+		INSERT INTO conversations (participant_a, participant_b, session_key_a, session_key_b)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (participant_a, participant_b) DO UPDATE
 		  SET participant_a = EXCLUDED.participant_a
-		RETURNING id, participant_a, participant_b, last_message_at, created_at`,
-		pa, pb,
-	).Scan(&conv.ID, &conv.ParticipantA, &conv.ParticipantB, &conv.LastMessageAt, &conv.CreatedAt)
+		RETURNING id, participant_a, participant_b, session_key_a, session_key_b, last_message_at, created_at`,
+		pa, pb, nullStr(skA), nullStr(skB),
+	).Scan(&conv.ID, &conv.ParticipantA, &conv.ParticipantB,
+		&conv.SessionKeyA, &conv.SessionKeyB,
+		&conv.LastMessageAt, &conv.CreatedAt)
 	return conv, err
+}
+
+func nullStr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func (r *Repository) GetConversation(ctx context.Context, id string) (*port.Conversation, error) {
 	conv := &port.Conversation{}
 	err := r.db.QueryRow(ctx,
-		`SELECT id, participant_a, participant_b, last_message_at, created_at FROM conversations WHERE id = $1`, id,
-	).Scan(&conv.ID, &conv.ParticipantA, &conv.ParticipantB, &conv.LastMessageAt, &conv.CreatedAt)
+		`SELECT id, participant_a, participant_b, session_key_a, session_key_b, last_message_at, created_at
+		 FROM conversations WHERE id = $1`, id,
+	).Scan(&conv.ID, &conv.ParticipantA, &conv.ParticipantB,
+		&conv.SessionKeyA, &conv.SessionKeyB,
+		&conv.LastMessageAt, &conv.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound("conversation_not_found", "conversation not found")
 	}
@@ -48,7 +61,7 @@ func (r *Repository) GetConversation(ctx context.Context, id string) (*port.Conv
 
 func (r *Repository) ListConversations(ctx context.Context, userGlobalID string) ([]port.Conversation, error) {
 	rows, err := r.db.Query(ctx, `
-		SELECT id, participant_a, participant_b, last_message_at, created_at
+		SELECT id, participant_a, participant_b, session_key_a, session_key_b, last_message_at, created_at
 		FROM conversations
 		WHERE participant_a = $1 OR participant_b = $1
 		ORDER BY COALESCE(last_message_at, created_at) DESC`,
@@ -62,7 +75,9 @@ func (r *Repository) ListConversations(ctx context.Context, userGlobalID string)
 	var out []port.Conversation
 	for rows.Next() {
 		var c port.Conversation
-		if err := rows.Scan(&c.ID, &c.ParticipantA, &c.ParticipantB, &c.LastMessageAt, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.ParticipantA, &c.ParticipantB,
+			&c.SessionKeyA, &c.SessionKeyB,
+			&c.LastMessageAt, &c.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

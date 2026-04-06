@@ -45,7 +45,6 @@ func TestLoad_InternalBaseURL_DefaultsToBaseURL(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 
-	// Если INTERNAL_BASE_URL не задан — равен BASE_URL
 	assert.Equal(t, cfg.BaseURL, cfg.InternalBaseURL)
 }
 
@@ -95,4 +94,25 @@ func TestLoad_InvalidOutboxInterval_UsesDefault(t *testing.T) {
 	cfg, err := config.Load()
 	require.NoError(t, err)
 	assert.Equal(t, 5*time.Second, cfg.OutboxInterval)
+}
+
+func TestLoad_NodeKeyPath_Default_Empty(t *testing.T) {
+	validEnv(t)
+	os.Unsetenv("NODE_KEY_PATH")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	// По умолчанию пусто — ключ генерируется эфемерно при старте
+	assert.Equal(t, "", cfg.NodeKeyPath)
+}
+
+func TestLoad_NodeKeyPath_Override(t *testing.T) {
+	validEnv(t)
+	setEnv(t, "NODE_KEY_PATH", "/app/keys/node-a.pem")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "/app/keys/node-a.pem", cfg.NodeKeyPath)
 }

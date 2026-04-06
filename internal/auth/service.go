@@ -10,6 +10,7 @@ import (
 
 	"github.com/dlc-01/replicast/internal/apperr"
 	"github.com/dlc-01/replicast/internal/config"
+	"github.com/dlc-01/replicast/internal/e2e"
 	"github.com/dlc-01/replicast/internal/logger"
 	"github.com/dlc-01/replicast/internal/port"
 )
@@ -34,8 +35,9 @@ func NewService(repo authRepository, log logger.Logger, cfg *config.Config) *Ser
 }
 
 type RegisterResult struct {
-	Token string
-	User  *port.User
+	Token      string
+	User       *port.User
+	PrivateKey string // RSA приватный ключ — отдаётся клиенту ОДИН РАЗ, не хранится
 }
 
 func (s *Service) Register(ctx context.Context, username, password string) (*RegisterResult, error) {
@@ -52,11 +54,18 @@ func (s *Service) Register(ctx context.Context, username, password string) (*Reg
 		return nil, fmt.Errorf("auth.Register bcrypt: %w", err)
 	}
 
+	// Генерируем RSA пару ключей для E2E шифрования DM
+	keyPair, err := e2e.GenerateKeyPair()
+	if err != nil {
+		return nil, fmt.Errorf("auth.Register generate keys: %w", err)
+	}
+
 	u := port.User{
 		GlobalID:      fmt.Sprintf("%s@%s", username, s.cfg.NodeName),
 		LocalUsername: username,
 		HomeNode:      s.cfg.NodeName,
 		PasswordHash:  string(hash),
+		PublicKey:     keyPair.PublicKey,
 	}
 	if err := s.repo.CreateUser(ctx, u); err != nil {
 		return nil, fmt.Errorf("auth.Register create: %w", err)
@@ -73,7 +82,11 @@ func (s *Service) Register(ctx context.Context, username, password string) (*Reg
 	}
 
 	s.log.Info("user registered", "global_id", u.GlobalID)
-	return &RegisterResult{Token: token, User: created}, nil
+	return &RegisterResult{
+		Token:      token,
+		User:       created,
+		PrivateKey: keyPair.PrivateKey, // клиент сохраняет, сервер забывает
+	}, nil
 }
 
 func (s *Service) Login(ctx context.Context, username, password string) (string, error) {

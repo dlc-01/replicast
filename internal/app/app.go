@@ -16,6 +16,7 @@ import (
 	"github.com/dlc-01/replicast/internal/comments"
 	"github.com/dlc-01/replicast/internal/config"
 	"github.com/dlc-01/replicast/internal/dms"
+	"github.com/dlc-01/replicast/internal/e2e"
 	"github.com/dlc-01/replicast/internal/federation"
 	"github.com/dlc-01/replicast/internal/feed"
 	"github.com/dlc-01/replicast/internal/follows"
@@ -23,6 +24,7 @@ import (
 	"github.com/dlc-01/replicast/internal/likes"
 	"github.com/dlc-01/replicast/internal/logger"
 	"github.com/dlc-01/replicast/internal/posts"
+	"github.com/dlc-01/replicast/internal/signing"
 	"github.com/dlc-01/replicast/internal/storage"
 	"github.com/dlc-01/replicast/internal/users"
 	"github.com/dlc-01/replicast/internal/worker"
@@ -49,6 +51,18 @@ func New(cfg *config.Config, log logger.Logger) (*App, error) {
 		return nil, fmt.Errorf("storage.RunMigrations: %w", err)
 	}
 	log.Info("migrations applied")
+
+	// — Инициализация RSA ключей узла для подписи межузловых запросов
+	nodeKeyPair, err := initNodeKeys(cfg, log)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init node keys: %w", err)
+	}
+	if nodeKeyPair != nil {
+		// Регистрируем функцию верификации в signing пакете
+		signing.VerifyNodeSignatureFunc = e2e.VerifyNodeSignature
+		log.Info("node RSA keys loaded", "public_key_len", len(nodeKeyPair.PublicKeyPEM))
+	}
 
 	// — Репозитории
 	authRepo := auth.NewRepository(db)
@@ -138,4 +152,34 @@ func (a *App) shutdown() error {
 	a.db.Close()
 	a.log.Info("node stopped gracefully", "node", a.cfg.NodeName)
 	return nil
+}
+
+// initNodeKeys загружает или генерирует RSA ключи узла.
+// Если NODE_KEY_PATH задан — читаем из файла.
+// Иначе — генерируем новую пару (эфемерная, не сохраняется между рестартами).
+func initNodeKeys(cfg *config.Config, log logger.Logger) (*e2e.NodeKeyPair, error) {
+	if cfg.NodeKeyPath != "" {
+		data, err := os.ReadFile(cfg.NodeKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("read node key: %w", err)
+		}
+		priv, err := e2e.ParsePrivateKey(string(data))
+		if err != nil {
+			return nil, fmt.Errorf("parse node key: %w", err)
+		}
+		kp, err := e2e.NodeKeyPairFromPrivate(priv)
+		if err != nil {
+			return nil, err
+		}
+		log.Info("node RSA key loaded from file", "path", cfg.NodeKeyPath)
+		return kp, nil
+	}
+
+	// Генерируем эфемерный ключ — новый при каждом старте
+	kp, err := e2e.GenerateNodeKeyPair()
+	if err != nil {
+		return nil, err
+	}
+	log.Info("node RSA key generated (ephemeral)")
+	return kp, nil
 }

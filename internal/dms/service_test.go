@@ -13,6 +13,8 @@ import (
 	"github.com/dlc-01/replicast/internal/port"
 )
 
+// — Моки ──────────────────────────────────────────────────────────────
+
 type mockDMRepo struct {
 	conversations map[string]*port.Conversation
 	messages      map[string][]port.Message
@@ -29,7 +31,7 @@ func newMockDMRepo() *mockDMRepo {
 	}
 }
 
-func (m *mockDMRepo) GetOrCreateConversation(_ context.Context, a, b string) (*port.Conversation, error) {
+func (m *mockDMRepo) GetOrCreateConversation(_ context.Context, a, b, skA, skB string) (*port.Conversation, error) {
 	key := a + ":" + b
 	if c, ok := m.conversations[key]; ok {
 		return c, nil
@@ -38,11 +40,14 @@ func (m *mockDMRepo) GetOrCreateConversation(_ context.Context, a, b string) (*p
 		ID:           "conv-" + a + "-" + b,
 		ParticipantA: a,
 		ParticipantB: b,
+		SessionKeyA:  skA,
+		SessionKeyB:  skB,
 		CreatedAt:    time.Now(),
 	}
 	m.conversations[key] = c
 	return c, nil
 }
+
 func (m *mockDMRepo) GetConversation(_ context.Context, id string) (*port.Conversation, error) {
 	for _, c := range m.conversations {
 		if c.ID == id {
@@ -51,6 +56,7 @@ func (m *mockDMRepo) GetConversation(_ context.Context, id string) (*port.Conver
 	}
 	return nil, apperr.NotFound("conversation_not_found", "not found")
 }
+
 func (m *mockDMRepo) ListConversations(_ context.Context, userGlobalID string) ([]port.Conversation, error) {
 	var out []port.Conversation
 	for _, c := range m.conversations {
@@ -60,10 +66,12 @@ func (m *mockDMRepo) ListConversations(_ context.Context, userGlobalID string) (
 	}
 	return out, nil
 }
+
 func (m *mockDMRepo) CreateMessage(_ context.Context, msg port.Message) error {
 	m.messages[msg.ConversationID] = append(m.messages[msg.ConversationID], msg)
 	return nil
 }
+
 func (m *mockDMRepo) GetMessages(_ context.Context, conversationID string, _ int) ([]port.Message, error) {
 	msgs := m.messages[conversationID]
 	if msgs == nil {
@@ -71,12 +79,14 @@ func (m *mockDMRepo) GetMessages(_ context.Context, conversationID string, _ int
 	}
 	return msgs, nil
 }
+
 func (m *mockDMRepo) GetUUIDByGlobalID(_ context.Context, globalID string) (string, error) {
 	if id, ok := m.uuids[globalID]; ok {
 		return id, nil
 	}
 	return "", errors.New("user not found")
 }
+
 func (m *mockDMRepo) GetNodeByGlobalID(_ context.Context, globalID string) (string, error) {
 	if node, ok := m.nodes[globalID]; ok {
 		return node, nil
@@ -92,17 +102,15 @@ func (m *mockDMFed) EnqueueEvent(_ context.Context, e port.OutboxEvent) error {
 }
 
 func newDMSvc(repo *mockDMRepo, fed *mockDMFed) *dms.Service {
-	cfg := &config.Config{NodeName: "node-a"}
-	return dms.NewService(repo, fed, logger.Nop(), cfg)
+	return dms.NewService(repo, fed, logger.Nop(), &config.Config{NodeName: "node-a"})
 }
 
 // — Тесты StartConversation ───────────────────────────────────────────
 
 func TestDMService_StartConversation_Success(t *testing.T) {
-	repo := newMockDMRepo()
-	svc := newDMSvc(repo, &mockDMFed{})
+	svc := newDMSvc(newMockDMRepo(), &mockDMFed{})
 
-	conv, err := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, err := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +122,7 @@ func TestDMService_StartConversation_Success(t *testing.T) {
 func TestDMService_StartConversation_SelfMessage(t *testing.T) {
 	svc := newDMSvc(newMockDMRepo(), &mockDMFed{})
 
-	_, err := svc.StartConversation(context.Background(), "alice@node-a", "alice@node-a")
+	_, err := svc.StartConversation(context.Background(), "alice@node-a", "alice@node-a", "", "")
 	var appErr *apperr.AppError
 	if !errors.As(err, &appErr) || appErr.Code != "self_message" {
 		t.Errorf("expected self_message error, got %v", err)
@@ -125,11 +133,29 @@ func TestDMService_StartConversation_Idempotent(t *testing.T) {
 	repo := newMockDMRepo()
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	conv1, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
-	conv2, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv1, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
+	conv2, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 
 	if conv1.ID != conv2.ID {
 		t.Error("same participants should return same conversation")
+	}
+}
+
+func TestDMService_StartConversation_WithSessionKeys(t *testing.T) {
+	repo := newMockDMRepo()
+	svc := newDMSvc(repo, &mockDMFed{})
+
+	skForMe := "encrypted-session-key-for-alice"
+	skForThem := "encrypted-session-key-for-bob"
+
+	conv, err := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", skForMe, skForThem)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Session keys сохраняются в диалоге
+	if conv.SessionKeyA == "" && conv.SessionKeyB == "" {
+		t.Error("session keys should be stored in conversation")
 	}
 }
 
@@ -139,7 +165,7 @@ func TestDMService_SendMessage_Success(t *testing.T) {
 	repo := newMockDMRepo()
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 	msg, err := svc.SendMessage(context.Background(), "alice@node-a", conv.ID, "hello bob!")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -154,8 +180,7 @@ func TestDMService_SendMessage_RemoteRecipient_SendsEvent(t *testing.T) {
 	fed := &mockDMFed{}
 	svc := newDMSvc(repo, fed)
 
-	// alice@node-a пишет bob@node-b (другой узел)
-	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 	_, err := svc.SendMessage(context.Background(), "alice@node-a", conv.ID, "hello!")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -177,7 +202,7 @@ func TestDMService_SendMessage_NotParticipant(t *testing.T) {
 	repo.uuids["carol@node-a"] = "uuid-carol"
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 	_, err := svc.SendMessage(context.Background(), "carol@node-a", conv.ID, "intruder!")
 
 	var appErr *apperr.AppError
@@ -192,7 +217,7 @@ func TestDMService_GetMessages_Success(t *testing.T) {
 	repo := newMockDMRepo()
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 	_, _ = svc.SendMessage(context.Background(), "alice@node-a", conv.ID, "msg 1")
 	_, _ = svc.SendMessage(context.Background(), "alice@node-a", conv.ID, "msg 2")
 
@@ -210,7 +235,7 @@ func TestDMService_GetMessages_NotParticipant(t *testing.T) {
 	repo.uuids["carol@node-a"] = "uuid-carol"
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 
 	_, err := svc.GetMessages(context.Background(), "carol@node-a", conv.ID, 10)
 	var appErr *apperr.AppError
@@ -226,8 +251,8 @@ func TestDMService_ListConversations(t *testing.T) {
 	repo.uuids["carol@node-a"] = "uuid-carol"
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	_, _ = svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
-	_, _ = svc.StartConversation(context.Background(), "alice@node-a", "carol@node-a")
+	_, _ = svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
+	_, _ = svc.StartConversation(context.Background(), "alice@node-a", "carol@node-a", "", "")
 
 	convs, err := svc.ListConversations(context.Background(), "alice@node-a")
 	if err != nil {
@@ -242,7 +267,7 @@ func TestDMService_MessageGlobalIDFormat(t *testing.T) {
 	repo := newMockDMRepo()
 	svc := newDMSvc(repo, &mockDMFed{})
 
-	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b")
+	conv, _ := svc.StartConversation(context.Background(), "alice@node-a", "bob@node-b", "", "")
 	msg, _ := svc.SendMessage(context.Background(), "alice@node-a", conv.ID, "test")
 
 	if len(msg.GlobalID) < 10 || msg.GlobalID[:4] != "msg:" {

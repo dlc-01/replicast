@@ -31,19 +31,19 @@ func (r *Repository) Create(ctx context.Context, u port.User) error {
 
 func (r *Repository) GetByID(ctx context.Context, id string) (*port.User, error) {
 	return r.scanOne(ctx,
-		`SELECT id, global_id, local_username, home_node, display_name, bio, is_local, created_at
+		`SELECT id, global_id, local_username, home_node, display_name, bio, public_key, is_local, created_at
 		 FROM users WHERE id = $1`, id)
 }
 
 func (r *Repository) GetByGlobalID(ctx context.Context, globalID string) (*port.User, error) {
 	return r.scanOne(ctx,
-		`SELECT id, global_id, local_username, home_node, display_name, bio, is_local, created_at
+		`SELECT id, global_id, local_username, home_node, display_name, bio, public_key, is_local, created_at
 		 FROM users WHERE global_id = $1`, globalID)
 }
 
 func (r *Repository) GetByUsername(ctx context.Context, username string) (*port.User, error) {
 	return r.scanOne(ctx,
-		`SELECT id, global_id, local_username, home_node, display_name, bio, is_local, created_at
+		`SELECT id, global_id, local_username, home_node, display_name, bio, public_key, is_local, created_at
 		 FROM users WHERE local_username = $1 AND is_local = true`, username)
 }
 
@@ -107,9 +107,10 @@ func (r *Repository) GetPasswordHash(ctx context.Context, globalID string) (stri
 func (r *Repository) scanOne(ctx context.Context, query string, args ...any) (*port.User, error) {
 	u := &port.User{}
 	var localUsername *string // NULL для remote users
+	var publicKey *string     // NULL для remote users без ключа
 	err := r.db.QueryRow(ctx, query, args...).Scan(
 		&u.ID, &u.GlobalID, &localUsername, &u.HomeNode,
-		&u.DisplayName, &u.Bio, &u.IsLocal, &u.CreatedAt,
+		&u.DisplayName, &u.Bio, &publicKey, &u.IsLocal, &u.CreatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -119,6 +120,9 @@ func (r *Repository) scanOne(ctx context.Context, query string, args ...any) (*p
 	}
 	if localUsername != nil {
 		u.LocalUsername = *localUsername
+	}
+	if publicKey != nil {
+		u.PublicKey = *publicKey
 	}
 	return u, nil
 }

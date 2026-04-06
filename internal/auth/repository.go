@@ -34,9 +34,9 @@ func (r *Repository) GetPasswordHash(ctx context.Context, globalID string) (stri
 
 func (r *Repository) CreateUser(ctx context.Context, u port.User) error {
 	_, err := r.db.Exec(ctx, `
-		INSERT INTO users (global_id, local_username, home_node, display_name, bio, password_hash, is_local)
-		VALUES ($1, $2, $3, $4, $5, $6, true)`,
-		u.GlobalID, u.LocalUsername, u.HomeNode, u.DisplayName, u.Bio, u.PasswordHash,
+		INSERT INTO users (global_id, local_username, home_node, display_name, bio, password_hash, public_key, is_local)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+		u.GlobalID, u.LocalUsername, u.HomeNode, u.DisplayName, u.Bio, u.PasswordHash, u.PublicKey,
 	)
 	if err != nil {
 		return fmt.Errorf("auth.CreateUser: %w", err)
@@ -48,17 +48,21 @@ func (r *Repository) CreateUser(ctx context.Context, u port.User) error {
 // Никогда не возвращает (nil, nil).
 func (r *Repository) GetByGlobalID(ctx context.Context, globalID string) (*port.User, error) {
 	u := &port.User{}
+	var publicKey *string
 	err := r.db.QueryRow(ctx,
-		`SELECT id, global_id, local_username, home_node, display_name, bio, is_local, created_at
+		`SELECT id, global_id, local_username, home_node, display_name, bio, public_key, is_local, created_at
 		 FROM users WHERE global_id = $1`,
 		globalID,
 	).Scan(&u.ID, &u.GlobalID, &u.LocalUsername, &u.HomeNode,
-		&u.DisplayName, &u.Bio, &u.IsLocal, &u.CreatedAt)
+		&u.DisplayName, &u.Bio, &publicKey, &u.IsLocal, &u.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, apperr.ErrUserNotFound
 		}
 		return nil, fmt.Errorf("auth.GetByGlobalID: %w", err)
+	}
+	if publicKey != nil {
+		u.PublicKey = *publicKey
 	}
 	return u, nil
 }

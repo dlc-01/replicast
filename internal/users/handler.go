@@ -6,7 +6,6 @@ import (
 
 	"github.com/dlc-01/replicast/internal/apperr"
 	"github.com/dlc-01/replicast/internal/ctxkey"
-	"github.com/dlc-01/replicast/internal/port"
 	"github.com/dlc-01/replicast/internal/respond"
 )
 
@@ -14,21 +13,22 @@ type Handler struct{ svc *Service }
 
 func NewHandler(svc *Service) *Handler { return &Handler{svc: svc} }
 
+// GetProfile — GET /api/v1/users/{username}
 func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	username := r.PathValue("username")
 	if username == "" {
 		respond.Error(w, r, apperr.BadRequest("missing_param", "username required"))
 		return
 	}
-
 	u, err := h.svc.GetProfile(r.Context(), username)
 	if err != nil {
 		respond.Error(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, toResponse(u))
+	respond.JSON(w, http.StatusOK, u)
 }
 
+// UpdateProfile — PUT /api/v1/users/me
 func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	globalID, _ := r.Context().Value(ctxkey.UserGlobalID).(string)
 	if globalID == "" {
@@ -41,33 +41,39 @@ func (h *Handler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 		Bio         string `json:"bio"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respond.Error(w, r, apperr.BadRequest("invalid_body", "invalid json"))
+		respond.Error(w, r, apperr.BadRequest("invalid_body", "invalid JSON"))
 		return
 	}
 
-	u, err := h.svc.UpdateProfile(r.Context(), globalID, req.DisplayName, req.Bio)
+	if _, err := h.svc.UpdateProfile(r.Context(), globalID, req.DisplayName, req.Bio); err != nil {
+		respond.Error(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetPublicKey — GET /api/v1/users/{username}/key
+// Возвращает публичный RSA ключ пользователя для E2E шифрования DM.
+func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	if username == "" {
+		respond.Error(w, r, apperr.BadRequest("missing_param", "username required"))
+		return
+	}
+
+	u, err := h.svc.GetProfile(r.Context(), username)
 	if err != nil {
 		respond.Error(w, r, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, toResponse(u))
-}
 
-// userResponse — публичное представление пользователя (без hash).
-type userResponse struct {
-	GlobalID    string `json:"global_id"`
-	Username    string `json:"username"`
-	HomeNode    string `json:"home_node"`
-	DisplayName string `json:"display_name"`
-	Bio         string `json:"bio"`
-}
-
-func toResponse(u *port.User) userResponse {
-	return userResponse{
-		GlobalID:    u.GlobalID,
-		Username:    u.LocalUsername,
-		HomeNode:    u.HomeNode,
-		DisplayName: u.DisplayName,
-		Bio:         u.Bio,
+	if u.PublicKey == "" {
+		respond.Error(w, r, apperr.NotFound("no_key", "user has no public key"))
+		return
 	}
+
+	respond.JSON(w, http.StatusOK, map[string]string{
+		"global_id":  u.GlobalID,
+		"public_key": u.PublicKey,
+	})
 }

@@ -2,17 +2,19 @@ package dms_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/dlc-01/replicast/internal/config"
-	"github.com/dlc-01/replicast/internal/ctxkey"
 	"github.com/dlc-01/replicast/internal/dms"
 	"github.com/dlc-01/replicast/internal/logger"
 	"github.com/dlc-01/replicast/internal/port"
+
+	"context"
+
+	"github.com/dlc-01/replicast/internal/ctxkey"
 )
 
 func withDMIdentity(r *http.Request, globalID string) *http.Request {
@@ -20,11 +22,11 @@ func withDMIdentity(r *http.Request, globalID string) *http.Request {
 }
 
 func newTestDMHandler() *dms.Handler {
-	repo := newMockDMRepo()
-	fed := &mockDMFed{}
-	svc := dms.NewService(repo, fed, logger.Nop(), &config.Config{NodeName: "node-a"})
+	svc := dms.NewService(newMockDMRepo(), &mockDMFed{}, logger.Nop(), &config.Config{NodeName: "node-a"})
 	return dms.NewHandler(svc)
 }
+
+// — StartConversation ─────────────────────────────────────────────────
 
 func TestDMHandler_StartConversation_Success(t *testing.T) {
 	h := newTestDMHandler()
@@ -43,6 +45,25 @@ func TestDMHandler_StartConversation_Success(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&conv)
 	if conv.ID == "" {
 		t.Error("conversation ID should not be empty")
+	}
+}
+
+func TestDMHandler_StartConversation_WithSessionKeys(t *testing.T) {
+	h := newTestDMHandler()
+	body, _ := json.Marshal(map[string]any{
+		"recipient_global_id":  "bob@node-b",
+		"session_key_for_me":   "encrypted-key-for-alice",
+		"session_key_for_them": "encrypted-key-for-bob",
+	})
+	r := withDMIdentity(
+		httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), "alice@node-a",
+	)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.StartConversation(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d\nbody: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 }
 
@@ -72,14 +93,13 @@ func TestDMHandler_StartConversation_MissingRecipient(t *testing.T) {
 	}
 }
 
+// — SendMessage ───────────────────────────────────────────────────────
+
 func TestDMHandler_SendMessage_Success(t *testing.T) {
 	h := newTestDMHandler()
 
-	// Создаём диалог
 	body, _ := json.Marshal(map[string]string{"recipient_global_id": "bob@node-b"})
-	r1 := withDMIdentity(
-		httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), "alice@node-a",
-	)
+	r1 := withDMIdentity(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), "alice@node-a")
 	r1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	h.StartConversation(w1, r1)
@@ -87,11 +107,8 @@ func TestDMHandler_SendMessage_Success(t *testing.T) {
 	var conv port.Conversation
 	json.NewDecoder(w1.Body).Decode(&conv)
 
-	// Отправляем сообщение
 	msgBody, _ := json.Marshal(map[string]string{"content": "hello bob!"})
-	r2 := withDMIdentity(
-		httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(msgBody)), "alice@node-a",
-	)
+	r2 := withDMIdentity(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(msgBody)), "alice@node-a")
 	r2.Header.Set("Content-Type", "application/json")
 	r2.SetPathValue("id", conv.ID)
 	w2 := httptest.NewRecorder()
@@ -106,9 +123,7 @@ func TestDMHandler_SendMessage_EmptyContent(t *testing.T) {
 	h := newTestDMHandler()
 
 	body, _ := json.Marshal(map[string]string{"recipient_global_id": "bob@node-b"})
-	r1 := withDMIdentity(
-		httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), "alice@node-a",
-	)
+	r1 := withDMIdentity(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), "alice@node-a")
 	r1.Header.Set("Content-Type", "application/json")
 	w1 := httptest.NewRecorder()
 	h.StartConversation(w1, r1)
@@ -116,9 +131,7 @@ func TestDMHandler_SendMessage_EmptyContent(t *testing.T) {
 	json.NewDecoder(w1.Body).Decode(&conv)
 
 	msgBody, _ := json.Marshal(map[string]string{"content": ""})
-	r2 := withDMIdentity(
-		httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(msgBody)), "alice@node-a",
-	)
+	r2 := withDMIdentity(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(msgBody)), "alice@node-a")
 	r2.Header.Set("Content-Type", "application/json")
 	r2.SetPathValue("id", conv.ID)
 	w2 := httptest.NewRecorder()
@@ -129,10 +142,11 @@ func TestDMHandler_SendMessage_EmptyContent(t *testing.T) {
 	}
 }
 
+// — GetMessages ───────────────────────────────────────────────────────
+
 func TestDMHandler_GetMessages_Success(t *testing.T) {
 	h := newTestDMHandler()
 
-	// Создаём диалог и отправляем сообщение
 	convBody, _ := json.Marshal(map[string]string{"recipient_global_id": "bob@node-b"})
 	r1 := withDMIdentity(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(convBody)), "alice@node-a")
 	r1.Header.Set("Content-Type", "application/json")
@@ -147,7 +161,6 @@ func TestDMHandler_GetMessages_Success(t *testing.T) {
 	r2.SetPathValue("id", conv.ID)
 	h.SendMessage(httptest.NewRecorder(), r2)
 
-	// Получаем сообщения
 	r3 := withDMIdentity(httptest.NewRequest(http.MethodGet, "/", nil), "alice@node-a")
 	r3.SetPathValue("id", conv.ID)
 	w3 := httptest.NewRecorder()
@@ -162,6 +175,8 @@ func TestDMHandler_GetMessages_Success(t *testing.T) {
 		t.Errorf("count = %v, want 1", resp["count"])
 	}
 }
+
+// — ListConversations ─────────────────────────────────────────────────
 
 func TestDMHandler_ListConversations_Success(t *testing.T) {
 	h := newTestDMHandler()

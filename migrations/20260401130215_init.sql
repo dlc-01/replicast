@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 -- Реестр известных узлов сети
 CREATE TABLE nodes (
                        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                       public_key TEXT NOT NULL,
+                       public_key TEXT,
                        name          TEXT NOT NULL UNIQUE,
                        base_url      TEXT NOT NULL UNIQUE,
                        shared_secret TEXT NOT NULL,

@@ -29,7 +29,6 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// globalID резолвится в UUID внутри сервиса через userRepo
 	p, err := h.svc.Create(r.Context(), globalID, req.Content, req.HideLikes)
 	if err != nil {
 		respond.Error(w, r, err)
@@ -39,7 +38,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	p, err := h.svc.Get(r.Context(), r.PathValue("id"))
+	p, err := h.svc.Get(r.Context(), r.PathValue("global_id"))
 	if err != nil {
 		respond.Error(w, r, err)
 		return
@@ -58,7 +57,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p, err := h.svc.Update(r.Context(), r.PathValue("id"), authorGlobalID, req.Content)
+	p, err := h.svc.Update(r.Context(), r.PathValue("global_id"), authorGlobalID, req.Content)
 	if err != nil {
 		respond.Error(w, r, err)
 		return
@@ -69,7 +68,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	authorGlobalID, _ := r.Context().Value(ctxkey.UserGlobalID).(string)
 
-	if err := h.svc.Delete(r.Context(), r.PathValue("id"), authorGlobalID); err != nil {
+	if err := h.svc.Delete(r.Context(), r.PathValue("global_id"), authorGlobalID); err != nil {
 		respond.Error(w, r, err)
 		return
 	}

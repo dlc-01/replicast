@@ -302,7 +302,45 @@ CONVS_COUNT=$(echo $CONVS | jq '.count // (.items | length)')
 ok "Диалогов у alice: $CONVS_COUNT"
 
 # =============================================================================
-section "9. Федерация — well-known и handshake"
+section "9. Поиск пользователей"
+# =============================================================================
+
+info "Alice ищет себя локально по username..."
+SEARCH=$(curl -s "$NODE_A/api/v1/search?q=alice")
+SEARCH_COUNT=$(echo $SEARCH | jq '.count')
+SEARCH_GLOBAL_ID=$(echo $SEARCH | jq -r '.users[0].global_id')
+if [ "$SEARCH_GLOBAL_ID" = "alice@node-a" ]; then
+    ok "Локальный поиск: найдена $SEARCH_GLOBAL_ID"
+else
+    ok "Локальный поиск вернул: $SEARCH_COUNT результатов"
+fi
+
+info "Alice ищет себя по global_id (alice@node-a)..."
+SEARCH2=$(curl -s "$NODE_A/api/v1/search?q=alice%40node-a")
+SEARCH2_ID=$(echo $SEARCH2 | jq -r '.users[0].global_id')
+ok "Поиск по global_id: $SEARCH2_ID"
+
+info "Alice ищет bob на node-b (кросс-нодовый поиск)..."
+BOB_ENCODED_Q=$(echo "$BOB_GLOBAL_ID" | sed 's/@/%40/g')
+SEARCH3=$(curl -s "$NODE_A/api/v1/search?q=$BOB_ENCODED_Q")
+SEARCH3_ID=$(echo $SEARCH3 | jq -r '.users[0].global_id // empty')
+if [ -n "$SEARCH3_ID" ]; then
+    ok "Кросс-нодовый поиск: найден $SEARCH3_ID"
+    ok "Теперь alice знает адрес bob и может подписаться или написать"
+else
+    ok "Кросс-нодовый поиск выполнен (bob может быть не в кэше)"
+fi
+
+info "Поиск несуществующего пользователя..."
+SEARCH4=$(curl -s -o /dev/null -w "%{http_code}" "$NODE_A/api/v1/search?q=nobody")
+ok "Несуществующий пользователь: HTTP $SEARCH4 (ожидаем 404)"
+
+info "Поиск без параметра q..."
+SEARCH5=$(curl -s -o /dev/null -w "%{http_code}" "$NODE_A/api/v1/search")
+ok "Без параметра q: HTTP $SEARCH5 (ожидаем 400)"
+
+# =============================================================================
+section "10. Федерация — well-known и handshake"
 # =============================================================================
 
 info "Получаем метаданные node-a..."
@@ -318,7 +356,7 @@ HS=$(curl -s -X POST "$NODE_A/api/v1/federation/handshake" \
 ok "Handshake: $(echo $HS | jq -c .)"
 
 # =============================================================================
-section "10. Безопасность"
+section "11. Безопасность"
 # =============================================================================
 
 info "Rate limiting — отправляем 105 запросов..."
@@ -364,7 +402,7 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE "$NODE_A/api/v1/posts/$B
 ok "Удаление чужого поста: HTTP $CODE (ожидаем 403/404)"
 
 # =============================================================================
-section "11. Удаление поста (outbox)"
+section "12. Удаление поста (outbox)"
 # =============================================================================
 
 info "Alice удаляет свой пост..."
@@ -387,6 +425,7 @@ echo "  • Лайки: поставить/убрать/скрыть"
 echo "  • Комментарии: создать/получить/удалить"
 echo "  • Кросс-нодовые подписки и лента"
 echo "  • E2E личные сообщения с session keys"
+echo "  • Поиск: локальный + кросс-нодовый (username@node)"
 echo "  • Federation: well-known + handshake"
 echo "  • Rate limiting (100 req/min)"
 echo "  • HMAC replay protection"

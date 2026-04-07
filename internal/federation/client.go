@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dlc-01/replicast/internal/config"
+	"github.com/dlc-01/replicast/internal/port"
 	"github.com/dlc-01/replicast/internal/signing"
 )
 
@@ -129,4 +130,45 @@ func (c *Client) FetchWellKnownInfo(ctx context.Context, nodeName string) (node,
 		return "", "", err
 	}
 	return wk.Node, wk.BaseURL, nil
+}
+
+// FetchRemoteUser получает профиль пользователя с удалённого узла.
+// globalID формат: username@node
+// Обращается к GET /api/v1/federation/users/{global_id} на удалённом узле.
+func (c *Client) FetchRemoteUser(ctx context.Context, globalID string) (*port.User, error) {
+	parts := strings.SplitN(globalID, "@", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("client.FetchRemoteUser: invalid global_id %q", globalID)
+	}
+	nodeName := parts[1]
+	baseURL := nodeNameToBaseURL(nodeName)
+
+	encoded := strings.ReplaceAll(globalID, "@", "%40")
+	encoded = strings.ReplaceAll(encoded, ":", "%3A")
+	url := baseURL + "/api/v1/federation/users/" + encoded
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("client.FetchRemoteUser request: %w", err)
+	}
+	req.Header.Set("X-Replicast-Secret", c.cfg.SharedSecret)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("client.FetchRemoteUser http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("client.FetchRemoteUser: user %q not found on %s", globalID, nodeName)
+	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("client.FetchRemoteUser: remote returned %d", resp.StatusCode)
+	}
+
+	var u port.User
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		return nil, fmt.Errorf("client.FetchRemoteUser decode: %w", err)
+	}
+	return &u, nil
 }

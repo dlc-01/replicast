@@ -95,7 +95,7 @@ func TestPostHandler_Get_Found(t *testing.T) {
 	h := posts.NewHandler(newPostSvc(postRepo, &mockUserResolver{}))
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/posts/post:alice@node-a:001", nil)
-	r.SetPathValue("id", "post:alice@node-a:001")
+	r.SetPathValue("global_id", "post:alice@node-a:001")
 	w := httptest.NewRecorder()
 	h.Get(w, r)
 
@@ -108,7 +108,7 @@ func TestPostHandler_Get_NotFound(t *testing.T) {
 	h := posts.NewHandler(newHandlerSvc())
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/posts/post:nobody:999", nil)
-	r.SetPathValue("id", "post:nobody:999")
+	r.SetPathValue("global_id", "post:nobody:999")
 	w := httptest.NewRecorder()
 	h.Get(w, r)
 
@@ -131,7 +131,7 @@ func TestPostHandler_Update_Success(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]string{"content": "updated"})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/posts/post:alice@node-a:001", bytes.NewReader(body))
-	r.SetPathValue("id", "post:alice@node-a:001")
+	r.SetPathValue("global_id", "post:alice@node-a:001")
 	r = withPostIdentity(r, "alice@node-a")
 	w := httptest.NewRecorder()
 	h.Update(w, r)
@@ -155,7 +155,7 @@ func TestPostHandler_Update_Forbidden(t *testing.T) {
 
 	body, _ := json.Marshal(map[string]string{"content": "hacked"})
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/posts/post:alice@node-a:001", bytes.NewReader(body))
-	r.SetPathValue("id", "post:alice@node-a:001")
+	r.SetPathValue("global_id", "post:alice@node-a:001")
 	r = withPostIdentity(r, "bob@node-a")
 	w := httptest.NewRecorder()
 	h.Update(w, r)
@@ -177,7 +177,7 @@ func TestPostHandler_Delete_Success(t *testing.T) {
 	h := posts.NewHandler(newPostSvc(postRepo, userRepo))
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/posts/post:alice@node-a:001", nil)
-	r.SetPathValue("id", "post:alice@node-a:001")
+	r.SetPathValue("global_id", "post:alice@node-a:001")
 	r = withPostIdentity(r, "alice@node-a")
 	w := httptest.NewRecorder()
 	h.Delete(w, r)
@@ -200,7 +200,7 @@ func TestPostHandler_Delete_Forbidden(t *testing.T) {
 	h := posts.NewHandler(newPostSvc(postRepo, userRepo))
 
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/posts/post:alice@node-a:001", nil)
-	r.SetPathValue("id", "post:alice@node-a:001")
+	r.SetPathValue("global_id", "post:alice@node-a:001")
 	r = withPostIdentity(r, "bob@node-a")
 	w := httptest.NewRecorder()
 	h.Delete(w, r)

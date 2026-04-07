@@ -24,6 +24,7 @@ import (
 	"github.com/dlc-01/replicast/internal/likes"
 	"github.com/dlc-01/replicast/internal/logger"
 	"github.com/dlc-01/replicast/internal/posts"
+	"github.com/dlc-01/replicast/internal/search"
 	"github.com/dlc-01/replicast/internal/signing"
 	"github.com/dlc-01/replicast/internal/storage"
 	"github.com/dlc-01/replicast/internal/users"
@@ -88,6 +89,7 @@ func New(cfg *config.Config, log logger.Logger) (*App, error) {
 	likeSvc := likes.NewService(likeRepo, fedRepo, postRepo, log, cfg)
 	commentSvc := comments.NewService(commentRepo, fedRepo, postRepo, log, cfg)
 	dmSvc := dms.NewService(dmRepo, fedRepo, log, cfg)
+	searchSvc := search.NewService(userRepo, fedClient, cfg)
 
 	outboxWorker := worker.NewOutboxWorker(fedRepo, fedClient, cfg)
 
@@ -101,6 +103,7 @@ func New(cfg *config.Config, log logger.Logger) (*App, error) {
 		LikeSvc:    likeSvc,
 		CommentSvc: commentSvc,
 		DMSvc:      dmSvc,
+		SearchSvc:  searchSvc,
 		Cfg:        cfg,
 	})
 

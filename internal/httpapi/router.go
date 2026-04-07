@@ -14,6 +14,7 @@ import (
 	"github.com/dlc-01/replicast/internal/likes"
 	"github.com/dlc-01/replicast/internal/posts"
 	"github.com/dlc-01/replicast/internal/respond"
+	"github.com/dlc-01/replicast/internal/search"
 	"github.com/dlc-01/replicast/internal/users"
 )
 
@@ -27,6 +28,7 @@ type Deps struct {
 	LikeSvc    *likes.Service
 	CommentSvc *comments.Service
 	DMSvc      *dms.Service
+	SearchSvc  *search.Service
 	Cfg        *config.Config
 }
 
@@ -42,6 +44,7 @@ func NewRouter(d Deps) http.Handler {
 	likeH := likes.NewHandler(d.LikeSvc)
 	commentH := comments.NewHandler(d.CommentSvc)
 	dmH := dms.NewHandler(d.DMSvc)
+	searchH := search.NewHandler(d.SearchSvc)
 
 	jwtAuth := RequireAuth(d.Cfg)
 	fedAuth := RequireFedAuth(d.Cfg)
@@ -81,6 +84,9 @@ func NewRouter(d Deps) http.Handler {
 	// — Follows
 	mux.HandleFunc("POST /api/v1/follows", jwtAuth(followH.Follow))
 	mux.HandleFunc("DELETE /api/v1/follows/{target}", jwtAuth(followH.Unfollow))
+
+	// — Search
+	mux.HandleFunc("GET /api/v1/search", searchH.Search)
 
 	// — Feed
 	mux.HandleFunc("GET /api/v1/feed", jwtAuth(feedH.GetFeed))
